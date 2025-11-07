@@ -1,0 +1,1518 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Panel Admin - Chatbot IA Universal</title>
+  <style>
+    /* =====================================================
+       VARIABLES Y COLORES
+    ===================================================== */
+    :root {
+      --bg-primary: #0f172a;
+      --bg-secondary: #1e293b;
+      --bg-card: #0b1220;
+      --accent: #06b6d4;
+      --accent-hover: #0891b2;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --error: #ef4444;
+      --text-primary: #f1f5f9;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --border: rgba(255,255,255,0.06);
+      --glass: rgba(255,255,255,0.03);
+      --shadow: 0 10px 40px rgba(0,0,0,0.3);
+    }
+
+    /* =====================================================
+       RESET Y BASE
+    ===================================================== */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      color: var(--text-primary);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* =====================================================
+       HEADER
+    ===================================================== */
+    .header {
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: var(--shadow);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .logo {
+      font-size: 1.5rem;
+      font-weight: 700;
+      background: linear-gradient(90deg, var(--accent), #7c3aed);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .header-title {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .header-title h1 {
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+
+    .header-title .subtitle {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .connection-status {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: var(--glass);
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      font-size: 0.875rem;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .nav-link {
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 0.875rem;
+      transition: all 0.2s;
+    }
+
+    .nav-link:hover {
+      background: var(--glass);
+      color: var(--text-primary);
+      border-color: var(--accent);
+    }
+
+    /* =====================================================
+       LAYOUT PRINCIPAL
+    ===================================================== */
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 300px 1fr;
+      gap: 1.5rem;
+      min-height: calc(100vh - 200px);
+    }
+
+    /* =====================================================
+       SIDEBAR
+    ===================================================== */
+    .sidebar {
+      background: var(--bg-card);
+      border-radius: 12px;
+      padding: 1.5rem;
+      box-shadow: var(--shadow);
+      height: fit-content;
+      position: sticky;
+      top: 100px;
+    }
+
+    .sidebar-section {
+      margin-bottom: 2rem;
+    }
+
+    .sidebar-section:last-child {
+      margin-bottom: 0;
+    }
+
+    .sidebar-title {
+      font-size: 0.875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .business-list {
+      max-height: 400px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .business-item {
+      padding: 1rem;
+      background: var(--glass);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .business-item:hover {
+      background: rgba(255,255,255,0.06);
+      border-color: var(--accent);
+      transform: translateX(4px);
+    }
+
+    .business-item.active {
+      background: linear-gradient(135deg, rgba(6,182,212,0.15), rgba(124,58,237,0.15));
+      border-color: var(--accent);
+      box-shadow: 0 4px 12px rgba(6,182,212,0.2);
+    }
+
+    .business-name {
+      font-weight: 600;
+      font-size: 0.95rem;
+      margin-bottom: 0.25rem;
+    }
+
+    .business-type {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+
+    .business-type-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      background: var(--glass);
+      border-radius: 4px;
+      font-size: 0.75rem;
+    }
+
+    .btn-refresh {
+      width: 100%;
+      padding: 0.75rem;
+      background: var(--glass);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all 0.2s;
+      font-size: 0.875rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+
+    .btn-refresh:hover {
+      background: rgba(255,255,255,0.08);
+      border-color: var(--accent);
+    }
+
+    /* =====================================================
+       MAIN CONTENT
+    ===================================================== */
+    .main-content {
+      background: var(--bg-card);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    /* TABS */
+    .tabs {
+      display: flex;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .tab {
+      flex: 1;
+      padding: 1rem 1.5rem;
+      background: transparent;
+      border: none;
+      border-bottom: 3px solid transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.2s;
+      font-size: 0.95rem;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+
+    .tab:hover {
+      background: var(--glass);
+      color: var(--text-primary);
+    }
+
+    .tab.active {
+      background: var(--bg-card);
+      border-bottom-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .tab-content {
+      display: none;
+      padding: 2rem;
+      animation: fadeIn 0.3s ease-in;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* =====================================================
+       FORMULARIOS
+    ===================================================== */
+    .form-section {
+      margin-bottom: 2rem;
+    }
+
+    .section-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .section-description {
+      color: var(--text-muted);
+      font-size: 0.875rem;
+      margin-bottom: 1.5rem;
+      line-height: 1.6;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .form-label {
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .form-label .required {
+      color: var(--error);
+    }
+
+    .form-input,
+    .form-select,
+    .form-textarea {
+      padding: 0.75rem;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-primary);
+      font-size: 0.95rem;
+      transition: all 0.2s;
+    }
+
+    .form-input:focus,
+    .form-select:focus,
+    .form-textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(6,182,212,0.1);
+    }
+
+    .form-textarea {
+      resize: vertical;
+      min-height: 80px;
+      font-family: inherit;
+    }
+
+    .form-hint {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    /* =====================================================
+       BOTONES
+    ===================================================== */
+    .btn {
+      padding: 0.75rem 1.5rem;
+      border-radius: 8px;
+      border: none;
+      font-size: 0.95rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), #7c3aed);
+      color: white;
+      box-shadow: 0 4px 12px rgba(6,182,212,0.3);
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(6,182,212,0.4);
+    }
+
+    .btn-secondary {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      color: var(--text-primary);
+    }
+
+    .btn-secondary:hover:not(:disabled) {
+      background: rgba(255,255,255,0.06);
+      border-color: var(--accent);
+    }
+
+    .btn-danger {
+      background: var(--error);
+      color: white;
+    }
+
+    .btn-danger:hover:not(:disabled) {
+      background: #dc2626;
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    /* =====================================================
+       UPLOAD ZONE
+    ===================================================== */
+    .upload-section {
+      margin-top: 2rem;
+      padding: 2rem;
+      background: var(--bg-secondary);
+      border-radius: 12px;
+      border: 2px dashed var(--border);
+    }
+
+    .upload-zone {
+      border: 2px dashed var(--border);
+      border-radius: 12px;
+      padding: 3rem;
+      text-align: center;
+      background: var(--bg-card);
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+
+    .upload-zone:hover,
+    .upload-zone.dragover {
+      border-color: var(--accent);
+      background: rgba(6,182,212,0.05);
+      transform: scale(1.02);
+    }
+
+    .upload-icon {
+      font-size: 3rem;
+      margin-bottom: 1rem;
+      opacity: 0.6;
+    }
+
+    .upload-text {
+      font-size: 1.125rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .upload-hint {
+      color: var(--text-muted);
+      font-size: 0.875rem;
+    }
+
+    .file-list {
+      margin-top: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .file-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .file-info {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .file-icon {
+      font-size: 2rem;
+    }
+
+    .file-details {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .file-name {
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    .file-size {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .btn-remove {
+      padding: 0.5rem 1rem;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.2s;
+      font-size: 0.875rem;
+    }
+
+    .btn-remove:hover {
+      border-color: var(--error);
+      color: var(--error);
+      background: rgba(239,68,68,0.1);
+    }
+
+    /* =====================================================
+       ALERTS Y STATUS
+    ===================================================== */
+    .alert {
+      padding: 1rem 1.5rem;
+      border-radius: 8px;
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-size: 0.95rem;
+      animation: slideIn 0.3s ease-out;
+    }
+
+    @keyframes slideIn {
+      from { transform: translateY(-10px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    .alert-success {
+      background: rgba(16,185,129,0.1);
+      border: 1px solid rgba(16,185,129,0.3);
+      color: var(--success);
+    }
+
+    .alert-error {
+      background: rgba(239,68,68,0.1);
+      border: 1px solid rgba(239,68,68,0.3);
+      color: var(--error);
+    }
+
+    .alert-info {
+      background: rgba(6,182,212,0.1);
+      border: 1px solid rgba(6,182,212,0.3);
+      color: var(--accent);
+    }
+
+    .alert-warning {
+      background: rgba(245,158,11,0.1);
+      border: 1px solid rgba(245,158,11,0.3);
+      color: var(--warning);
+    }
+
+    /* =====================================================
+       CARDS Y LISTAS
+    ===================================================== */
+    .card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .card-title {
+      font-size: 1.125rem;
+      font-weight: 600;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 3rem 2rem;
+      color: var(--text-muted);
+    }
+
+    .empty-icon {
+      font-size: 4rem;
+      opacity: 0.3;
+      margin-bottom: 1rem;
+    }
+
+    .empty-title {
+      font-size: 1.25rem;
+      margin-bottom: 0.5rem;
+      color: var(--text-secondary);
+    }
+
+    .empty-description {
+      font-size: 0.95rem;
+    }
+
+    /* =====================================================
+       FAQs
+    ===================================================== */
+    .faq-list {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      max-height: 600px;
+      overflow-y: auto;
+    }
+
+    .faq-item {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      transition: all 0.2s;
+    }
+
+    .faq-item:hover {
+      border-color: var(--accent);
+      box-shadow: 0 4px 12px rgba(6,182,212,0.1);
+    }
+
+    .faq-question {
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+      color: var(--accent);
+    }
+
+    .faq-answer {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+
+    .faq-meta {
+      display: flex;
+      gap: 1rem;
+      margin-top: 0.75rem;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .faq-priority {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.25rem 0.5rem;
+      background: var(--glass);
+      border-radius: 4px;
+    }
+
+    .faq-priority.high {
+      background: rgba(16,185,129,0.15);
+      color: var(--success);
+    }
+
+    /* =====================================================
+       LOADING Y SPINNERS
+    ===================================================== */
+    .spinner {
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .loading-text {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      color: var(--text-muted);
+      font-size: 0.95rem;
+    }
+
+    /* =====================================================
+       RESPONSIVE
+    ===================================================== */
+    @media (max-width: 1024px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        position: static;
+      }
+
+      .header {
+        flex-direction: column;
+        gap: 1rem;
+      }
+
+      .header-right {
+        width: 100%;
+        justify-content: space-between;
+      }
+    }
+
+    @media (max-width: 768px) {
+      .container {
+        padding: 1rem;
+      }
+
+      .tabs {
+        overflow-x: auto;
+      }
+
+      .tab {
+        flex: none;
+        min-width: 150px;
+      }
+
+      .form-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .btn-group {
+        flex-direction: column;
+      }
+
+      .btn {
+        width: 100%;
+      }
+    }
+
+    /* =====================================================
+       SCROLLBAR
+    ===================================================== */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: var(--bg-secondary);
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(255,255,255,0.15);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header class="header">
+    <div class="header-left">
+      <div class="logo">🤖</div>
+      <div class="header-title">
+        <h1>Panel de Administración</h1>
+        <div class="subtitle">Sistema Universal Chatbot IA</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="connection-status">
+        <span class="status-dot"></span>
+        <span>Conectado al backend</span>
+      </div>
+      <div class="nav-links">
+        <a href="index.html" class="nav-link">🏠 Inicio</a>
+        <a href="demo.html" class="nav-link">💬 Demo</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- CONTAINER PRINCIPAL -->
+  <div class="container">
+    <div class="layout">
+
+      <!-- SIDEBAR -->
+      <aside class="sidebar">
+        <div class="sidebar-section">
+          <div class="sidebar-title">
+            <span>🏢</span>
+            <span>Negocios</span>
+          </div>
+          <div class="business-list" id="business-list">
+            <!-- Los negocios se cargarán aquí dinámicamente -->
+          </div>
+          <button class="btn-refresh" id="btn-refresh">
+            <span>🔄</span>
+            <span>Actualizar lista</span>
+          </button>
+        </div>
+      </aside>
+
+      <!-- CONTENIDO PRINCIPAL -->
+      <main class="main-content">
+        <!-- TABS -->
+        <div class="tabs">
+          <button class="tab active" data-tab="business">
+            <span>🏢</span>
+            <span>Gestionar Negocios</span>
+          </button>
+          <button class="tab" data-tab="documents">
+            <span>📄</span>
+            <span>Documentos</span>
+          </button>
+          <button class="tab" data-tab="faqs">
+            <span>❓</span>
+            <span>FAQs</span>
+          </button>
+        </div>
+
+        <!-- TAB: GESTIONAR NEGOCIOS -->
+        <div class="tab-content active" id="tab-business">
+          <div class="form-section">
+            <h2 class="section-title">
+              <span>➕</span>
+              <span>Crear Nuevo Negocio</span>
+            </h2>
+            <p class="section-description">
+              Completa la información básica del negocio para comenzar. El sistema detectará automáticamente el tipo de información en tus documentos.
+            </p>
+
+            <div id="create-status"></div>
+
+            <form id="form-create-business">
+              <div class="form-grid">
+                <div class="form-group">
+                  <label class="form-label">
+                    Nombre del negocio <span class="required">*</span>
+                  </label>
+                  <input type="text" class="form-input" id="biz-name" placeholder="Ej: FitZone Gym" required />
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">
+                    Tipo de negocio <span class="required">*</span>
+                  </label>
+                  <select class="form-select" id="biz-type" required>
+                    <option value="">Seleccionar tipo...</option>
+                    <option value="restaurante">🍽️ Restaurante</option>
+                    <option value="gimnasio">💪 Gimnasio</option>
+                    <option value="tienda">🛍️ Tienda</option>
+                    <option value="hotel">🏨 Hotel</option>
+                    <option value="spa">💆 Spa/Wellness</option>
+                    <option value="clinica">🏥 Clínica</option>
+                    <option value="academia">📚 Academia</option>
+                    <option value="bar">🍺 Bar/Cafetería</option>
+                    <option value="otro">📋 Otro</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">Teléfono</label>
+                  <input type="tel" class="form-input" id="biz-phone" placeholder="555-0123" />
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">Email</label>
+                  <input type="email" class="form-input" id="biz-email" placeholder="contacto@negocio.com" />
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">Dirección</label>
+                <input type="text" class="form-input" id="biz-address" placeholder="Calle Principal 123" />
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">Sitio Web</label>
+                <input type="url" class="form-input" id="biz-website" placeholder="https://tunegocio.com" />
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">Tono Personalizado</label>
+                <input type="text" class="form-input" id="biz-tone" placeholder="Ej: Usa un tono amigable y profesional" />
+                <span class="form-hint">Define cómo debe comunicarse el chatbot con tus clientes</span>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">Mensaje de Bienvenida</label>
+                <textarea class="form-textarea" id="biz-welcome" placeholder="¡Hola! Bienvenido a nuestro negocio. ¿En qué puedo ayudarte hoy?"></textarea>
+                <span class="form-hint">El saludo inicial que verán tus clientes</span>
+              </div>
+
+              <div class="form-grid">
+                <div class="form-group">
+                  <label class="form-label">Temperatura IA (0.0 - 1.0)</label>
+                  <input type="number" class="form-input" id="biz-temp" step="0.05" min="0" max="1" placeholder="0.7" />
+                  <span class="form-hint">Controla la creatividad de las respuestas</span>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">Top P (0.0 - 1.0)</label>
+                  <input type="number" class="form-input" id="biz-top-p" step="0.05" min="0" max="1" placeholder="0.85" />
+                  <span class="form-hint">Controla la variedad de respuestas</span>
+                </div>
+              </div>
+
+              <div class="btn-group">
+                <button type="submit" class="btn btn-primary">
+                  <span>✨</span>
+                  <span>Crear Negocio</span>
+                </button>
+                <button type="button" class="btn btn-secondary" id="btn-seed">
+                  <span>🌱</span>
+                  <span>Crear Demo Restaurante</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- TAB: DOCUMENTOS -->
+        <div class="tab-content" id="tab-documents">
+          <div id="documents-empty" class="empty-state">
+            <div class="empty-icon">📂</div>
+            <div class="empty-title">Selecciona un negocio</div>
+            <div class="empty-description">Elige un negocio de la barra lateral para gestionar sus documentos</div>
+          </div>
+
+          <div id="documents-content" style="display: none;">
+            <div class="form-section">
+              <h2 class="section-title">
+                <span>📄</span>
+                <span>Entrenar IA con Documentos</span>
+              </h2>
+              <p class="section-description">
+                Sube documentos PDF o DOCX con información de tu negocio. El sistema detectará automáticamente 
+                menús, clases, productos, servicios y creará FAQs de alta prioridad para respuestas 100% precisas.
+              </p>
+
+              <div id="upload-status"></div>
+
+              <div class="upload-section">
+                <div class="upload-zone" id="upload-zone">
+                  <div class="upload-icon">📁</div>
+                  <div class="upload-text">Arrastra archivos aquí</div>
+                  <div class="upload-hint">o haz clic para seleccionar (PDF, DOCX)</div>
+                  <input type="file" id="file-input" accept=".pdf,.docx" multiple style="display: none;" />
+                </div>
+
+                <div class="file-list" id="file-list" style="display: none;">
+                  <!-- Archivos seleccionados aparecerán aquí -->
+                </div>
+
+                <div class="btn-group" style="margin-top: 1.5rem;" id="upload-actions" style="display: none;">
+                  <button class="btn btn-primary" id="btn-upload">
+                    <span>🚀</span>
+                    <span>Procesar Documentos</span>
+                  </button>
+                  <button class="btn btn-secondary" id="btn-clear-files">
+                    <span>🗑️</span>
+                    <span>Limpiar Lista</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB: FAQs -->
+        <div class="tab-content" id="tab-faqs">
+          <div id="faqs-empty" class="empty-state">
+            <div class="empty-icon">❓</div>
+            <div class="empty-title">Selecciona un negocio</div>
+            <div class="empty-description">Elige un negocio de la barra lateral para ver sus FAQs</div>
+          </div>
+
+          <div id="faqs-content" style="display: none;">
+            <div class="form-section">
+              <h2 class="section-title">
+                <span>❓</span>
+                <span>FAQs del Negocio</span>
+              </h2>
+              <p class="section-description">
+                FAQs con prioridad ≥ 100 son respuestas directas (0% alucinaciones). 
+                FAQs con prioridad menor son contexto para el modelo IA.
+              </p>
+
+              <div id="faqs-list" class="faq-list">
+                <!-- Los FAQs se cargarán aquí -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+
+  <script>
+    // =====================================================
+    // CONFIGURACIÓN
+    // =====================================================
+    const baseUrl = 'http://127.0.0.1:8000';
+    let selectedBusiness = null;
+    let pendingFiles = [];
+
+    // =====================================================
+    // ELEMENTOS DEL DOM
+    // =====================================================
+    const elements = {
+      // Sidebar
+      businessList: document.getElementById('business-list'),
+      btnRefresh: document.getElementById('btn-refresh'),
+
+      // Tabs
+      tabs: document.querySelectorAll('.tab'),
+      tabContents: document.querySelectorAll('.tab-content'),
+
+      // Form crear negocio
+      formCreateBusiness: document.getElementById('form-create-business'),
+      createStatus: document.getElementById('create-status'),
+      btnSeed: document.getElementById('btn-seed'),
+
+      // Documentos
+      documentsEmpty: document.getElementById('documents-empty'),
+      documentsContent: document.getElementById('documents-content'),
+      uploadZone: document.getElementById('upload-zone'),
+      fileInput: document.getElementById('file-input'),
+      fileList: document.getElementById('file-list'),
+      uploadActions: document.getElementById('upload-actions'),
+      uploadStatus: document.getElementById('upload-status'),
+      btnUpload: document.getElementById('btn-upload'),
+      btnClearFiles: document.getElementById('btn-clear-files'),
+
+      // FAQs
+      faqsEmpty: document.getElementById('faqs-empty'),
+      faqsContent: document.getElementById('faqs-content'),
+      faqsList: document.getElementById('faqs-list'),
+    };
+
+    // =====================================================
+    // UTILIDADES
+    // =====================================================
+    function showAlert(container, message, type = 'info') {
+      const alertClass = `alert-${type}`;
+      const icons = {
+        success: '✅',
+        error: '❌',
+        info: 'ℹ️',
+        warning: '⚠️'
+      };
+      
+      container.innerHTML = `
+        <div class="alert ${alertClass}">
+          <span>${icons[type]}</span>
+          <span>${message}</span>
+        </div>
+      `;
+      
+      if (type === 'success') {
+        setTimeout(() => {
+          container.innerHTML = '';
+        }, 5000);
+      }
+    }
+
+    function formatFileSize(bytes) {
+      if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+      if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return bytes + ' bytes';
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // =====================================================
+    // SISTEMA DE TABS
+    // =====================================================
+    elements.tabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        const tabName = tab.dataset.tab;
+        
+        // Actualizar tabs activos
+        elements.tabs.forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        
+        // Actualizar contenido activo
+        elements.tabContents.forEach(content => {
+          content.classList.remove('active');
+        });
+        document.getElementById(`tab-${tabName}`).classList.add('active');
+
+        // Si cambiamos a documentos o FAQs y hay negocio seleccionado
+        if (selectedBusiness) {
+          if (tabName === 'documents') {
+            showDocumentsForBusiness();
+          } else if (tabName === 'faqs') {
+            loadFAQsForBusiness();
+          }
+        }
+      });
+    });
+
+    // =====================================================
+    // GESTIÓN DE NEGOCIOS
+    // =====================================================
+    async function loadBusinesses() {
+      try {
+        const response = await fetch(`${baseUrl}/businesses`);
+        if (!response.ok) throw new Error('Error al cargar negocios');
+        
+        const businesses = await response.json();
+        renderBusinessList(businesses);
+      } catch (error) {
+        console.error('Error:', error);
+        elements.businessList.innerHTML = `
+          <div class="empty-state" style="padding: 2rem 1rem;">
+            <div style="font-size: 2rem; opacity: 0.3;">⚠️</div>
+            <div style="color: var(--text-muted); font-size: 0.9rem;">Error al cargar negocios</div>
+          </div>
+        `;
+      }
+    }
+
+    function renderBusinessList(businesses) {
+      if (!businesses || businesses.length === 0) {
+        elements.businessList.innerHTML = `
+          <div class="empty-state" style="padding: 2rem 1rem;">
+            <div style="font-size: 2rem; opacity: 0.3;">📭</div>
+            <div style="color: var(--text-muted); font-size: 0.9rem;">No hay negocios aún</div>
+          </div>
+        `;
+        return;
+      }
+
+      elements.businessList.innerHTML = businesses.map(biz => `
+        <div class="business-item ${selectedBusiness?.id === biz.id ? 'active' : ''}" data-business-id="${biz.id}">
+          <div class="business-name">${escapeHtml(biz.name)}</div>
+          <div class="business-type">
+            <span class="business-type-badge">${escapeHtml(biz.business_type || 'general')}</span>
+          </div>
+        </div>
+      `).join('');
+
+      // Event listeners para seleccionar negocio
+      document.querySelectorAll('.business-item').forEach(item => {
+        item.addEventListener('click', () => {
+          const bizId = parseInt(item.dataset.businessId);
+          const business = businesses.find(b => b.id === bizId);
+          selectBusiness(business);
+        });
+      });
+    }
+
+    function selectBusiness(business) {
+      selectedBusiness = business;
+      
+      // Actualizar UI
+      document.querySelectorAll('.business-item').forEach(item => {
+        item.classList.remove('active');
+      });
+      document.querySelector(`[data-business-id="${business.id}"]`)?.classList.add('active');
+
+      // Actualizar contenido según tab activo
+      const activeTab = document.querySelector('.tab.active').dataset.tab;
+      if (activeTab === 'documents') {
+        showDocumentsForBusiness();
+      } else if (activeTab === 'faqs') {
+        loadFAQsForBusiness();
+      }
+    }
+
+    // =====================================================
+    // CREAR NEGOCIO
+    // =====================================================
+    elements.formCreateBusiness.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const data = {
+        name: document.getElementById('biz-name').value.trim(),
+        business_type: document.getElementById('biz-type').value,
+        phone: document.getElementById('biz-phone').value.trim() || null,
+        email: document.getElementById('biz-email').value.trim() || null,
+        address: document.getElementById('biz-address').value.trim() || null,
+        website: document.getElementById('biz-website').value.trim() || null,
+        custom_tone: document.getElementById('biz-tone').value.trim() || null,
+        welcome_message: document.getElementById('biz-welcome').value.trim() || null,
+        temperature: parseFloat(document.getElementById('biz-temp').value) || null,
+        top_p: parseFloat(document.getElementById('biz-top-p').value) || null,
+      };
+
+      if (!data.name || !data.business_type) {
+        showAlert(elements.createStatus, 'Completa los campos obligatorios (*)', 'error');
+        return;
+      }
+
+      try {
+        const response = await fetch(`${baseUrl}/businesses`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        });
+
+        if (!response.ok) throw new Error('Error al crear negocio');
+        
+        const newBusiness = await response.json();
+        showAlert(elements.createStatus, `✅ Negocio "${newBusiness.name}" creado exitosamente`, 'success');
+        
+        // Limpiar formulario
+        elements.formCreateBusiness.reset();
+        
+        // Recargar lista
+        await loadBusinesses();
+        
+        // Seleccionar el nuevo negocio
+        selectBusiness(newBusiness);
+        
+      } catch (error) {
+        showAlert(elements.createStatus, `Error: ${error.message}`, 'error');
+      }
+    });
+
+    // Crear demo restaurante
+    elements.btnSeed.addEventListener('click', async () => {
+      const confirmed = confirm('¿Crear negocio demo "Restaurante Demo"?');
+      if (!confirmed) return;
+
+      try {
+        const response = await fetch(`${baseUrl}/seed-demo`, {
+          method: 'POST',
+        });
+
+        if (!response.ok) throw new Error('Error al crear demo');
+        
+        showAlert(elements.createStatus, '✅ Negocio demo creado exitosamente', 'success');
+        await loadBusinesses();
+        
+      } catch (error) {
+        showAlert(elements.createStatus, `Error: ${error.message}`, 'error');
+      }
+    });
+
+    // =====================================================
+    // DOCUMENTOS
+    // =====================================================
+    function showDocumentsForBusiness() {
+      if (!selectedBusiness) {
+        elements.documentsEmpty.style.display = 'block';
+        elements.documentsContent.style.display = 'none';
+        return;
+      }
+
+      elements.documentsEmpty.style.display = 'none';
+      elements.documentsContent.style.display = 'block';
+    }
+
+    // Upload zone - drag & drop
+    elements.uploadZone.addEventListener('click', () => {
+      elements.fileInput.click();
+    });
+
+    elements.uploadZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      elements.uploadZone.classList.add('dragover');
+    });
+
+    elements.uploadZone.addEventListener('dragleave', () => {
+      elements.uploadZone.classList.remove('dragover');
+    });
+
+    elements.uploadZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      elements.uploadZone.classList.remove('dragover');
+      const files = Array.from(e.dataTransfer.files);
+      addFiles(files);
+    });
+
+    elements.fileInput.addEventListener('change', (e) => {
+      const files = Array.from(e.target.files);
+      addFiles(files);
+    });
+
+    function addFiles(files) {
+      const validFiles = files.filter(file => {
+        const validTypes = ['.pdf', '.docx'];
+        const extension = '.' + file.name.split('.').pop().toLowerCase();
+        return validTypes.includes(extension);
+      });
+
+      pendingFiles = [...pendingFiles, ...validFiles];
+      renderFileList();
+    }
+
+    function renderFileList() {
+      if (pendingFiles.length === 0) {
+        elements.fileList.style.display = 'none';
+        elements.uploadActions.style.display = 'none';
+        return;
+      }
+
+      elements.fileList.style.display = 'flex';
+      elements.uploadActions.style.display = 'flex';
+      
+      elements.fileList.innerHTML = pendingFiles.map((file, index) => `
+        <div class="file-item">
+          <div class="file-info">
+            <div class="file-icon">📄</div>
+            <div class="file-details">
+              <div class="file-name">${escapeHtml(file.name)}</div>
+              <div class="file-size">${formatFileSize(file.size)}</div>
+            </div>
+          </div>
+          <button class="btn-remove" data-file-index="${index}">Eliminar</button>
+        </div>
+      `).join('');
+
+      // Event listeners para eliminar
+      document.querySelectorAll('.btn-remove').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const index = parseInt(btn.dataset.fileIndex);
+          pendingFiles.splice(index, 1);
+          renderFileList();
+        });
+      });
+    }
+
+    elements.btnClearFiles.addEventListener('click', () => {
+      pendingFiles = [];
+      elements.fileInput.value = '';
+      renderFileList();
+    });
+
+    elements.btnUpload.addEventListener('click', async () => {
+      if (!selectedBusiness) {
+        showAlert(elements.uploadStatus, 'Selecciona un negocio primero', 'error');
+        return;
+      }
+
+      if (pendingFiles.length === 0) {
+        showAlert(elements.uploadStatus, 'No hay archivos para procesar', 'error');
+        return;
+      }
+
+      elements.btnUpload.disabled = true;
+      elements.btnUpload.innerHTML = '<div class="spinner"></div><span>Procesando...</span>';
+
+      try {
+        const formData = new FormData();
+        pendingFiles.forEach(file => {
+          formData.append('files', file);
+        });
+        formData.append('business_id', selectedBusiness.id);
+
+        const response = await fetch(`${baseUrl}/api/train-ia`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.detail || 'Error al procesar documentos');
+        }
+
+        const result = await response.json();
+        showAlert(elements.uploadStatus, 
+          `✅ ${result.documents_processed} documento(s) procesado(s) exitosamente`, 
+          'success'
+        );
+
+        // Limpiar archivos
+        pendingFiles = [];
+        elements.fileInput.value = '';
+        renderFileList();
+
+      } catch (error) {
+        showAlert(elements.uploadStatus, `Error: ${error.message}`, 'error');
+      } finally {
+        elements.btnUpload.disabled = false;
+        elements.btnUpload.innerHTML = '<span>🚀</span><span>Procesar Documentos</span>';
+      }
+    });
+
+    // =====================================================
+    // FAQs
+    // =====================================================
+    async function loadFAQsForBusiness() {
+      if (!selectedBusiness) {
+        elements.faqsEmpty.style.display = 'block';
+        elements.faqsContent.style.display = 'none';
+        return;
+      }
+
+      elements.faqsEmpty.style.display = 'none';
+      elements.faqsContent.style.display = 'block';
+
+      try {
+        const response = await fetch(`${baseUrl}/faqs?business_id=${selectedBusiness.id}`);
+        if (!response.ok) throw new Error('Error al cargar FAQs');
+        
+        const faqs = await response.json();
+        renderFAQsList(faqs);
+      } catch (error) {
+        elements.faqsList.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">⚠️</div>
+            <div class="empty-title">Error al cargar FAQs</div>
+            <div class="empty-description">${error.message}</div>
+          </div>
+        `;
+      }
+    }
+
+    function renderFAQsList(faqs) {
+      if (!faqs || faqs.length === 0) {
+        elements.faqsList.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">📝</div>
+            <div class="empty-title">No hay FAQs aún</div>
+            <div class="empty-description">
+              Sube documentos para generar FAQs automáticamente o créalos manualmente.
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      // Ordenar por prioridad
+      faqs.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+
+      elements.faqsList.innerHTML = faqs.map(faq => {
+        const isHighPriority = (faq.priority || 0) >= 100;
+        const priorityClass = isHighPriority ? 'high' : '';
+        
+        return `
+          <div class="faq-item">
+            <div class="faq-question">${escapeHtml(faq.question)}</div>
+            <div class="faq-answer">${escapeHtml(faq.answer.substring(0, 200))}${faq.answer.length > 200 ? '...' : ''}</div>
+            <div class="faq-meta">
+              <span class="faq-priority ${priorityClass}">
+                ${isHighPriority ? '⭐' : '📊'} Prioridad: ${faq.priority || 0}
+              </span>
+              <span>${faq.category || 'general'}</span>
+              ${isHighPriority ? '<span style="color: var(--success);">✅ Respuesta directa (0% alucinaciones)</span>' : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // =====================================================
+    // INICIALIZACIÓN
+    // =====================================================
+    elements.btnRefresh.addEventListener('click', loadBusinesses);
+
+    // Cargar negocios al inicio
+    loadBusinesses();
+
+    console.log('✅ Admin Panel v2.0 - Sistema Universal cargado');
+  </script>
+
+</body>
+</html>

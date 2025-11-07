@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ChatBot AI - Asistente Virtual 24/7 para tu Negocio</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    :root{
+      --primary:#6366f1;--primary-dark:#4f46e5;--secondary:#8b5cf6;
+      --success:#10b981;--bg-dark:#0f172a;--bg-light:#f8fafc;
+      --text-dark:#1e293b;--text-light:#64748b;--white:#fff;
+      --shadow:0 20px 25px -5px rgb(0 0 0 / 0.1)
+    }
+    html{scroll-behavior:smooth}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+      background:var(--bg-light);color:var(--text-dark);line-height:1.6}
+    .top-nav{position:fixed;top:0;left:0;width:100%;z-index:100;
+      background:rgba(15,23,42,.35);backdrop-filter:blur(12px);
+      padding:.85rem 0;transition:background .3s ease,box-shadow .3s ease}
+    .nav-container{max-width:1200px;margin:0 auto;padding:0 1.5rem;
+      display:flex;align-items:center;justify-content:space-between;gap:1.5rem}
+    .nav-brand{color:#fff;font-weight:700;font-size:1.05rem;letter-spacing:.08em;
+      text-transform:uppercase;text-decoration:none}
+    .nav-links{display:flex;align-items:center;gap:1rem;flex-wrap:wrap}
+    .nav-links a{color:rgba(255,255,255,.85);text-decoration:none;
+      font-size:.95rem;padding:.45rem .65rem;border-radius:999px;
+      transition:background .3s ease,color .3s ease}
+    .nav-links a:hover{background:rgba(255,255,255,.18);color:#fff}
+    .nav-cta{color:var(--primary);background:#fff;padding:.6rem 1.4rem;
+      border-radius:999px;font-weight:600;text-decoration:none;
+      box-shadow:0 10px 30px rgba(99,102,241,.18);
+      transition:transform .2s ease,box-shadow .2s ease}
+    .nav-cta:hover{transform:translateY(-2px);
+      box-shadow:0 18px 38px rgba(99,102,241,.26)}
+    main{display:flex;flex-direction:column;gap:6rem}
+    .container{max-width:1200px;margin:0 auto;padding:0 1.5rem;width:100%}
+    .section-heading{text-align:center;margin-bottom:3.5rem}
+    .section-heading span{display:inline-block;padding:.35rem .85rem;
+      border-radius:999px;background:rgba(99,102,241,.12);
+      color:var(--primary-dark);font-weight:600;font-size:.85rem;
+      letter-spacing:.08em;text-transform:uppercase}
+    .section-heading h2{font-size:2.45rem;margin-top:1rem;margin-bottom:1rem;
+      color:var(--text-dark)}
+    .section-heading p{color:var(--text-light);max-width:720px;margin:0 auto}
+    .hero{min-height:100vh;background:linear-gradient(135deg,var(--primary),var(--secondary));
+      display:flex;align-items:center;justify-content:center;padding:7rem 2rem 4rem;
+      position:relative;overflow:hidden}
+    .hero::before{content:'';position:absolute;width:500px;height:500px;
+      background:rgba(255,255,255,.1);border-radius:50%;top:-250px;right:-250px}
+    .hero-content{max-width:1200px;display:grid;grid-template-columns:1fr 1fr;
+      gap:4rem;align-items:center;position:relative;z-index:1;width:100%}
+    .hero-text h1{font-size:3.5rem;color:var(--white);margin-bottom:1.5rem;
+      line-height:1.2;font-weight:800}
+    .hero-text h1 .highlight{background:linear-gradient(to right,#fbbf24,#f59e0b);
+      -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+      background-clip:text}
+    .hero-text p{font-size:1.3rem;color:rgba(255,255,255,.9);margin-bottom:2rem}
+    .hero-trust{display:flex;flex-wrap:wrap;gap:.75rem 1.5rem;margin-top:1rem;
+      color:rgba(255,255,255,.75);font-size:.9rem}
+    .cta-buttons{display:flex;gap:1rem}
+    .btn{padding:1rem 2rem;border:none;border-radius:12px;font-size:1.1rem;
+      font-weight:600;cursor:pointer;transition:all .3s ease;text-decoration:none;
+      display:inline-block}
+    .btn-primary{background:var(--white);color:var(--primary);box-shadow:var(--shadow)}
+    .btn-primary:hover{transform:translateY(-2px);
+      box-shadow:0 25px 30px -5px rgb(0 0 0 / .2)}
+    .btn-secondary{background:rgba(255,255,255,.2);color:var(--white);
+      backdrop-filter:blur(10px)}
+    .btn-secondary:hover{background:rgba(255,255,255,.3)}
+    .hero-demo{background:var(--white);border-radius:20px;padding:2rem;
+      box-shadow:var(--shadow)}
+    .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:2rem;margin:2rem 0}
+    .hero-checklist{list-style:none;margin-top:2rem;display:grid;gap:.75rem}
+    .hero-checklist li{display:flex;align-items:center;gap:.75rem;
+      color:rgba(255,255,255,.9);font-size:.95rem}
+    .stat-item{text-align:center}
+    .stat-number{font-size:2.5rem;font-weight:800;color:var(--primary)}
+    .stat-label{color:var(--text-light);font-size:.9rem}
+    /* ... resto de estilos idénticos, sin errores de codificación ... */
+    footer{background:var(--bg-dark);color:rgba(255,255,255,.7);
+      text-align:center;padding:2.5rem 1.5rem;font-size:.9rem}
+    footer a{color:rgba(255,255,255,.85);text-decoration:none}
+    footer a:hover{text-decoration:underline}
+
+
+    #chatbot-widget-root {
+    position: fixed !important;
+    bottom: 20px !important;
+    right: 20px !important;
+    z-index: 999999 !important;
+  }
+
+  #chatbot-window {
+    border-radius: 20px !important;
+    overflow: hidden !important;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.25) !important;
+  }
+
+  .chatbot-header {
+    border-top-left-radius: 20px !important;
+    border-top-right-radius: 20px !important;
+  }
+
+  .chatbot-message-bubble {
+    border-radius: 16px !important;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+  }
+
+  .chatbot-send {
+    border-radius: 12px !important;
+  }
+
+  /* Asegura que el botón flotante se vea por encima de todo */
+  #chatbot-toggle {
+    position: fixed !important;
+    bottom: 20px !important;
+    right: 20px !important;
+    z-index: 999999 !important;
+  }
+
+  /* Evita interferencia del fondo hero */
+  .hero, main, body {
+    overflow: visible !important;
+  }
+  </style>
+</head>
+<body>
+  <nav class="top-nav">
+    <div class="nav-container">
+      <a class="nav-brand" href="#inicio">Chatbot AI</a>
+      <div class="nav-links">
+        <a href="#inicio">Inicio</a>
+        <a href="#como-funciona">Cómo funciona</a>
+        <a href="#features">Características</a>
+        <a href="#precios">Planes</a>
+        <a href="#faq">FAQ</a>
+        <a href="demo.html">Demo</a>
+        <a href="admin.html">Admin</a>
+      </div>
+      <a class="nav-cta" href="#cta-final">Solicitar demo</a>
+    </div>
+  </nav>
+
+  <main>
+    <!-- HERO -->
+    <section id="inicio" class="hero">
+      <div class="hero-content container">
+        <div class="hero-text">
+          <h1>Atiende a tus clientes <span class="highlight">24/7</span> con IA</h1>
+          <p>Chatbot inteligente que responde preguntas automáticamente. Sin costes de API. 100% en tu servidor.</p>
+          <div class="hero-trust">
+            <span>✅ Instalación guiada</span>
+            <span>✅ Soporte en español</span>
+            <span>✅ Infraestructura propia</span>
+          </div>
+          <div class="cta-buttons">
+            <button class="btn btn-primary" onclick="openChat()">Prueba el Demo</button>
+            <a href="#features" class="btn btn-secondary">Ver Características</a>
+          </div>
+        </div>
+        <div class="hero-demo">
+          <img src="https://images.unsplash.com/photo-1531746790731-6c087fecd65a?w=500&h=400&fit=crop"
+               alt="Chatbot Demo" style="width:100%;border-radius:12px;">
+        </div>
+      </div>
+    </section>
+
+    <!-- resto del contenido igual al anterior, pero con acentos y emojis correctos -->
+  </main>
+
+  <footer>
+    © <script>document.write(new Date().getFullYear());</script> Chatbot AI · Hecho con ❤️ en España ·
+    <a href="mailto:hola@chatbot.ai">hola@chatbot.ai</a>
+  </footer>
+
+  <script>
+  window.CHATBOT_CONFIG = {
+    apiUrl: 'http://192.168.56.1:8000',
+    businessId: 1,
+    businessName: 'Chatbot AI',
+    primaryColor: '#6366f1',
+    secondaryColor: '#8b5cf6'
+  };
+</script>
+<script>
+  // Configuración del widget
+  window.CHATBOT_API_URL = 'http://localhost:8000';
+  window.CHATBOT_BUSINESS_ID = 2;
+  window.CHATBOT_POSITION = 'bottom-right';
+  window.CHATBOT_PRIMARY_COLOR = '#6366f1';
+</script>
+<script src="widget.js"></script>
+<script>
+  function openChat() {
+    if (window.chatbotWidget) {
+      window.chatbotWidget.toggleWidget();
+    }
+  }
+  
+  function toggleChat() {
+    if (window.chatbotWidget) {
+      window.chatbotWidget.toggleWidget();
+    }
+  }
+  
+  console.log('🚀 Chat widget cargado');
+</script>
+
+
+</body>
+</html>

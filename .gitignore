@@ -1,0 +1,116 @@
+# ----- General OS / Editor -----
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.tmp
+*.bak
+*.orig
+
+# VS Code / IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# ----- Python -----
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.tox/
+.nox/
+.python-version
+.venv/
+venv/
+env/
+ENV/
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+coverage/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ----- Node / Frontend -----
+node_modules/
+.pnpm-store/
+.npm/
+.nuxt/
+dist/
+build/
+.cache/
+.next/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+
+# ----- Logs -----
+logs/
+*.log
+
+# ----- Environment / Secrets -----
+.env
+.env.*
+*.env
+
+# ----- Databases / Models -----
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+*.gguf
+
+# keep an example DB tracked if needed (uncomment next line and add the exact file)
+# !chatbot/chatbot.example.db
+
+# Large local LLM model files
+chatbot/backend/models/*.gguf
+chatbot/backend/models/*.bin
+chatbot/backend/models/*.pt
+
+# ----- App-specific storage -----
+# Ignore uploaded/processed documents and temp storage
+storage/
+chatbot/storage/
+chatbot/backend/storage/
+
+# Allow placeholder keepers
+!storage/.gitkeep
+!chatbot/storage/.gitkeep
+!chatbot/backend/storage/.gitkeep
+
+# ----- Misc dev artifacts -----
+*.bak
+*.orig
+*.tmp
+*.temp
+*.trace
+*.out
+*.log.*
+
+# Python pip/build leftovers
+pip-wheel-metadata/
+pip-log.txt
+build/
+dist/
+
+# ----- Build artifacts -----
+*.tar
+*.gz
+*.zip
+*.7z
+
+# ----- OS-specific -----
+Desktop.ini

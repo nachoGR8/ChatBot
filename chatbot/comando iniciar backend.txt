@@ -1,0 +1,1 @@
+cd c:\Users\nacho\Desktop\chatbot\chatbot; powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ".\run_backend_fixed.ps1 -AdminKey 'nacho123'"
