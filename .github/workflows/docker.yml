@@ -1,0 +1,50 @@
+name: Docker
+# Construye la imagen de verdad y la arranca: valida el Dockerfile y el despliegue.
+# Solo corre cuando cambian los ficheros que afectan a la imagen o al despliegue (compilar llama.cpp tarda).
+on:
+  push:
+    branches: [main]
+    paths: ["chatbot/Dockerfile", "chatbot/.dockerignore", "chatbot/backend/requirements.txt", "deploy/**", ".github/workflows/docker.yml"]
+  pull_request:
+    paths: ["chatbot/Dockerfile", "chatbot/.dockerignore", "chatbot/backend/requirements.txt", "deploy/**", ".github/workflows/docker.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Construir la imagen
+        uses: docker/build-push-action@v6
+        with:
+          context: chatbot
+          load: true
+          tags: chatbot:ci
+          # NATIVE=OFF: el runner de CI no es la máquina donde correrá la imagen.
+          build-args: LLAMA_CMAKE_ARGS=-DGGML_NATIVE=OFF
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Arranca y responde (sin modelo)
+        run: |
+          docker run -d --name app -p 8000:8000 -e ADMIN_API_KEY=ci chatbot:ci
+          for i in $(seq 1 30); do curl -fsS localhost:8000/health && break; sleep 2; done
+          curl -fsS localhost:8000/health
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8000/seed-demo)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'X-API-KEY: ci' localhost:8000/seed-demo)" = 200
+          docker exec app python -c "import llama_cpp; print('llama_cpp', llama_cpp.__version__)"
+          docker exec app id -u | grep -qx 1000   # no corre como root
+
+      - name: Logs si falla
+        if: failure()
+        run: docker logs app || true
+
+      - name: Validar el despliegue (compose + Caddyfile)
+        working-directory: deploy
+        run: |
+          cp .env.example .env && sed -i 's/^DOMAIN=$/DOMAIN=ci.example.com/' .env
+          docker compose config --quiet
+          docker run --rm -e DOMAIN=ci.example.com -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10-alpine \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

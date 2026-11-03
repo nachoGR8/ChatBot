@@ -1,0 +1,47 @@
+# Despliegue en un VPS: Caddy (HTTPS automático) delante del chatbot.
+# Uso: ver deploy/README.md  ·  bash setup.sh lo prepara todo en un Ubuntu recién creado.
+services:
+  chatbot:
+    build:
+      context: ../chatbot
+    env_file: .env
+    environment:
+      DATABASE_URL: sqlite:////data/chatbot.db
+      CHATBOT_TRUST_PROXY: "1"        # la IP real llega en X-Forwarded-For desde Caddy
+    # Sin "ports": el backend solo es accesible a través de Caddy (si no, se podría falsear X-Forwarded-For).
+    expose:
+      - "8000"
+    volumes:
+      - ./models:/app/backend/models:ro
+      - chatbot-data:/data
+      - chatbot-storage:/app/storage
+    mem_limit: 3g
+    restart: unless-stopped
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: caddy:2.10-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?Define DOMAIN en deploy/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data              # certificados: no lo borres o Let's Encrypt te limitará
+      - caddy-config:/config
+    depends_on:
+      - chatbot
+    restart: unless-stopped
+    logging: *logging
+
+volumes:
+  chatbot-data:
+  chatbot-storage:
+  caddy-data:
+  caddy-config:

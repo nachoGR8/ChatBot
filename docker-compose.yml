@@ -9,6 +9,8 @@ services:
     volumes:
       - ./chatbot/backend/models:/app/backend/models:ro   # aquí va el .gguf
       - chatbot-data:/data
+      - chatbot-storage:/app/storage
     restart: unless-stopped
 volumes:
   chatbot-data:
+  chatbot-storage:

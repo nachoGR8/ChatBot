@@ -26,6 +26,7 @@ chatbot/
 ├── frontend/                        # index.html, demo.html, admin.html, widget.js
 ├── tests/                           # pytest (lógica + API con modelo falso)
 ├── eval/cases.json  scripts/        # casos de evaluación, eval.py, bench.py
+deploy/                              # despliegue en VPS: Caddy + Docker, setup.sh, guía
 └── run_backend_fixed.ps1            # arranque en Windows (venv + deps + servidor)
 ```
 
@@ -138,8 +139,11 @@ cp .env.example .env                      # edita ADMIN_API_KEY
 docker compose up --build                 # http://localhost:8000/demo.html
 ```
 
-El modelo no va en la imagen: se monta como volumen de solo lectura. La base de datos persiste en el volumen `chatbot-data`.
-Inicializa los datos con `docker compose run --rm chatbot python -m backend.main --init-db`.
+El modelo no va en la imagen: se monta como volumen de solo lectura. La base de datos y los documentos persisten en volúmenes;
+las tablas se crean solas al arrancar. La imagen compila llama.cpp para tu CPU (la primera vez tarda unos minutos).
+
+**Publicarlo en un VPS con HTTPS:** ver [`deploy/README.md`](deploy/README.md). Un script (`deploy/setup.sh`) instala Docker,
+descarga un modelo de 3B y lo arranca detrás de Caddy con certificado automático.
 
 ## Calidad: tests y evaluación
 

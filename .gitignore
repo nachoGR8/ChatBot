@@ -115,3 +115,8 @@ dist/
 
 # ----- OS-specific -----
 Desktop.ini
+
+# ----- Despliegue -----
+deploy/models/
+*.gguf
+deploy/backups/
