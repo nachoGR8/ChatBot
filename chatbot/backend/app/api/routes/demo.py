@@ -10,13 +10,34 @@ from ..dependencies import get_db, verify_admin_api_key
 
 router = APIRouter(tags=["demo"])
 
+DEMO_NAME = "Asistente de demostración"
+# (pregunta, respuesta, categoría, prioridad): el asistente explica el propio proyecto.
+DEMO_FAQS = [
+    ("¿Qué es este chatbot?",
+     "Un asistente que cualquier negocio puede añadir a su web con dos líneas. Responde con las FAQ del negocio y, "
+     "si no hay una respuesta exacta, con un modelo de lenguaje que corre en el propio servidor.",
+     "general", 10),
+    ("¿Qué modelo de IA usa?",
+     "Un modelo Llama cuantizado (GGUF) que se ejecuta con llama.cpp en el mismo servidor, sin APIs de pago.",
+     "tecnologia", 9),
+    ("¿Mis datos salen del servidor?",
+     "No. Las preguntas, las FAQ y el modelo están en el mismo servidor: no se envía nada a servicios externos.",
+     "privacidad", 9),
+    ("¿Cómo lo añado a mi web?",
+     "Con dos líneas: una indica el ID del negocio y otra carga widget.js desde el servidor del chatbot.",
+     "integracion", 8),
+    ("¿Puede atender a varios negocios?",
+     "Sí. Cada negocio tiene sus propias FAQ, su tono y su mensaje de bienvenida, y se gestionan desde el panel de administración.",
+     "general", 7),
+]
+
 
 @router.post("/seed-demo", dependencies=[Depends(verify_admin_api_key)])
 def seed_demo_data(
     db: Session = Depends(get_db),
     reset: bool = Query(False, description="Si es true, borra los datos existentes y los recrea"),
 ):
-    existing = db.query(Business).filter(func.lower(Business.name) == "restaurante la paella").first()
+    existing = db.query(Business).filter(func.lower(Business.name) == DEMO_NAME.lower()).first()
 
     if reset and existing:
         db.query(FAQ).filter(FAQ.business_id == existing.id).delete()
@@ -34,53 +55,17 @@ def seed_demo_data(
         }
 
     demo_business = Business(
-        name="Restaurante La Paella",
-        business_type="restaurant",
-        phone="+34 977 123 456",
-        email="info@lapaella.com",
-        address="Calle Principal 123, Salou",
-        website="www.lapaella.com",
+        name=DEMO_NAME,
+        business_type="otro",
+        welcome_message="¡Hola! 👋 Soy la demo de este chatbot. Pregúntame cómo funciona.",
     )
     db.add(demo_business)
     db.commit()
     db.refresh(demo_business)
 
     demo_faqs = [
-        FAQ(
-            business_id=demo_business.id,
-            question="¿Qué horario tenéis?",
-            answer="Abrimos de lunes a domingo de 13:00 a 16:00 y de 20:00 a 23:30. Los domingos solo mediodía.",
-            category="horario",
-            priority=10,
-        ),
-        FAQ(
-            business_id=demo_business.id,
-            question="¿Tenéis menú sin gluten?",
-            answer="Sí, tenemos opciones sin gluten en todos nuestros menús. Nuestro arroz y marisco son naturalmente sin gluten.",
-            category="menu",
-            priority=9,
-        ),
-        FAQ(
-            business_id=demo_business.id,
-            question="¿Cómo puedo hacer una reserva?",
-            answer="Puedes reservar llamando al +34 977 123 456 o escribiéndonos a info@lapaella.com. También por WhatsApp.",
-            category="reservas",
-            priority=10,
-        ),
-        FAQ(
-            business_id=demo_business.id,
-            question="¿Tenéis parking?",
-            answer="Sí, tenemos parking privado gratuito para clientes justo detrás del restaurante.",
-            category="instalaciones",
-            priority=5,
-        ),
-        FAQ(
-            business_id=demo_business.id,
-            question="¿Aceptáis grupos grandes?",
-            answer="Sí, tenemos capacidad para grupos de hasta 50 personas. Para grupos superiores a 10, recomendamos reservar con antelación.",
-            category="reservas",
-            priority=7,
-        ),
+        FAQ(business_id=demo_business.id, question=q, answer=a, category=c, priority=p)
+        for q, a, c, p in DEMO_FAQS
     ]
 
     for faq in demo_faqs:

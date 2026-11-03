@@ -1,104 +1,211 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Restaurante La Paella - Demo</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 0;
-            background: #f5f5f5;
-        }
-        /* Top navigation for demo */
-        .top-nav { display:flex;justify-content:flex-end;gap:8px;padding:12px 24px;background:transparent }
-        .top-nav a{ text-decoration:none;color:#111;padding:8px 12px;border-radius:8px;background:rgba(0,0,0,0.04) }
-        .top-nav a:hover{ background:rgba(0,0,0,0.08) }
-        
-        .restaurant-page {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 2rem;
-        }
-        
-        header {
-            background: white;
-            padding: 2rem;
-            border-radius: 10px;
-            margin-bottom: 2rem;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        
-        h1 {
-            color: #d32f2f;
-            margin: 0 0 0.5rem 0;
-        }
-        
-        .menu-section {
-            background: white;
-            padding: 2rem;
-            border-radius: 10px;
-            margin-bottom: 2rem;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        
-        .notice {
-            background: #fff3cd;
-            border: 1px solid #ffc107;
-            padding: 1rem;
-            border-radius: 8px;
-            margin-bottom: 2rem;
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Demo en vivo · Chatbot AI</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    :root{
+      --primary:#6366f1;--primary-dark:#4f46e5;--secondary:#8b5cf6;
+      --success:#10b981;--bg-dark:#0f172a;--bg-light:#f8fafc;
+      --text-dark:#1e293b;--text-light:#64748b;--white:#fff;
+      --shadow:0 20px 25px -5px rgb(0 0 0 / 0.1)
+    }
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+      background:var(--bg-light);color:var(--text-dark);line-height:1.6}
+    .top-nav{position:fixed;top:0;left:0;width:100%;z-index:100;
+      background:rgba(15,23,42,.35);backdrop-filter:blur(12px);padding:.85rem 0}
+    .nav-container,.container{max-width:1200px;margin:0 auto;padding:0 1.5rem;width:100%}
+    .nav-container{display:flex;align-items:center;justify-content:space-between;gap:1.5rem}
+    .nav-brand{color:#fff;font-weight:700;font-size:1.05rem;letter-spacing:.08em;
+      text-transform:uppercase;text-decoration:none}
+    .nav-links{display:flex;gap:1rem;flex-wrap:wrap}
+    .nav-links a{color:rgba(255,255,255,.85);text-decoration:none;font-size:.95rem;
+      padding:.45rem .65rem;border-radius:999px;transition:background .3s}
+    .nav-links a:hover,.nav-links a.active{background:rgba(255,255,255,.18);color:#fff}
+
+    .hero{background:linear-gradient(135deg,var(--primary),var(--secondary));
+      padding:8rem 0 5rem;position:relative;overflow:hidden}
+    .hero::before{content:'';position:absolute;width:500px;height:500px;
+      background:rgba(255,255,255,.1);border-radius:50%;top:-250px;right:-250px}
+    .hero-grid{display:grid;grid-template-columns:1.1fr .9fr;gap:3.5rem;align-items:center;
+      position:relative;z-index:1}
+    .eyebrow{display:inline-flex;align-items:center;gap:.5rem;padding:.35rem .85rem;
+      border-radius:999px;background:rgba(255,255,255,.16);color:#fff;font-weight:600;
+      font-size:.8rem;letter-spacing:.08em;text-transform:uppercase}
+    .dot{width:8px;height:8px;border-radius:50%;background:#94a3b8}
+    .dot.ok{background:#34d399;box-shadow:0 0 0 4px rgba(52,211,153,.25)}
+    .hero h1{font-size:3.1rem;color:#fff;line-height:1.15;font-weight:800;margin:1.2rem 0 1rem}
+    .hero h1 .highlight{background:linear-gradient(to right,#fbbf24,#f59e0b);
+      -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+    .hero p.lead{font-size:1.2rem;color:rgba(255,255,255,.9);max-width:560px}
+    .biz-picker{margin-top:2rem}
+    .biz-picker small{display:block;color:rgba(255,255,255,.75);font-size:.85rem;margin-bottom:.6rem}
+    .biz-list{display:flex;flex-wrap:wrap;gap:.6rem}
+    .biz-list a{padding:.55rem 1.1rem;border-radius:999px;text-decoration:none;font-weight:600;
+      font-size:.95rem;color:#fff;background:rgba(255,255,255,.18);transition:all .2s}
+    .biz-list a:hover{background:rgba(255,255,255,.3)}
+    .biz-list a.active{background:#fff;color:var(--primary-dark);box-shadow:var(--shadow)}
+
+    .card{background:#fff;border-radius:20px;padding:2rem;box-shadow:var(--shadow)}
+    .card h3{font-size:1.15rem;margin-bottom:.3rem}
+    .card .hint{color:var(--text-light);font-size:.92rem;margin-bottom:1.2rem}
+    .chips{display:flex;flex-direction:column;gap:.6rem}
+    .chip{text-align:left;border:1px solid #e2e8f0;background:var(--bg-light);border-radius:12px;
+      padding:.8rem 1rem;font-size:.98rem;color:var(--text-dark);cursor:pointer;
+      font-family:inherit;transition:all .2s;display:flex;justify-content:space-between;gap:1rem}
+    .chip::after{content:'→';color:var(--primary);font-weight:700}
+    .chip:hover{border-color:var(--primary);background:#eef2ff;transform:translateX(3px)}
+    .chip.free{border-style:dashed}
+    .empty{color:var(--text-light);font-size:.95rem}
+
+    section.block{padding:5rem 0}
+    .section-heading{text-align:center;margin-bottom:3rem}
+    .section-heading span{display:inline-block;padding:.35rem .85rem;border-radius:999px;
+      background:rgba(99,102,241,.12);color:var(--primary-dark);font-weight:600;font-size:.8rem;
+      letter-spacing:.08em;text-transform:uppercase}
+    .section-heading h2{font-size:2.2rem;margin-top:1rem}
+    .section-heading p{color:var(--text-light);max-width:680px;margin:.6rem auto 0}
+    .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:1.5rem}
+    .step{background:#fff;border-radius:18px;padding:1.8rem;box-shadow:0 8px 24px rgba(15,23,42,.06);
+      border-top:4px solid var(--primary)}
+    .step .n{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:10px;
+      background:#eef2ff;color:var(--primary-dark);font-weight:800;margin-bottom:1rem}
+    .step h4{font-size:1.1rem;margin-bottom:.5rem}
+    .step p{color:var(--text-light);font-size:.95rem}
+    .step code,.embed code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85em}
+    .step code{background:#f1f5f9;padding:.1rem .35rem;border-radius:6px}
+
+    .embed{background:var(--bg-dark);color:#e2e8f0;border-radius:18px;padding:1.6rem 1.8rem;
+      max-width:760px;margin:0 auto;overflow-x:auto}
+    .embed pre{white-space:pre;line-height:1.7}
+    .embed .c{color:#64748b}.embed .t{color:#f472b6}.embed .a{color:#93c5fd}.embed .s{color:#86efac}
+
+    footer{background:var(--bg-dark);color:rgba(255,255,255,.7);text-align:center;
+      padding:2.5rem 1.5rem;font-size:.9rem}
+    footer a{color:rgba(255,255,255,.85)}
+
+    @media (max-width:900px){
+      .hero-grid,.steps{grid-template-columns:1fr}
+      .hero h1{font-size:2.3rem}
+      .nav-links{display:none}
+    }
+  </style>
 </head>
 <body>
-    <div class="restaurant-page">
-        <nav class="top-nav">
-            <a href="index.html">Home</a>
-            <a href="demo.html">Demo</a>
-            <a href="admin.html">Admin</a>
-        </nav>
-        <header>
-            <h1>🥘 Restaurante La Paella</h1>
-            <p>Auténtica comida española en Salou</p>
-        </header>
-
-        <div class="notice">
-            <strong>💬 ¿Tienes preguntas?</strong> 
-            Haz clic en el botón de chat en la esquina inferior derecha. 
-            Nuestro asistente virtual está disponible 24/7.
-        </div>
-
-        <div class="menu-section">
-            <h2>Nuestra Historia</h2>
-            <p>
-                Desde 1985, Restaurante La Paella ofrece la mejor cocina mediterránea 
-                en el corazón de Salou. Nuestros platos son preparados con ingredientes 
-                frescos y locales.
-            </p>
-        </div>
-
-        <div class="menu-section">
-            <h2>Menú Destacado</h2>
-            <ul>
-                <li>Paella Valenciana - 16€</li>
-                <li>Paella de Marisco - 18€</li>
-                <li>Fideuá - 15€</li>
-                <li>Arroz Negro - 17€</li>
-            </ul>
-        </div>
-
-        <div class="menu-section">
-            <h2>Contacto</h2>
-            <p>📞 +34 977 123 456</p>
-            <p>📧 info@lapaella.com</p>
-            <p>📍 Calle Principal 123, Salou</p>
-        </div>
+  <nav class="top-nav">
+    <div class="nav-container">
+      <a class="nav-brand" href="index.html">Chatbot AI</a>
+      <div class="nav-links">
+        <a href="index.html">Inicio</a>
+        <a href="demo.html" class="active">Demo</a>
+        <a href="admin.html">Admin</a>
+      </div>
     </div>
+  </nav>
 
-    <!-- Así se incrusta el chat en cualquier web: dos líneas. El negocio se elige con ?business=ID -->
-    <script>window.CHATBOT_BUSINESS_ID = new URLSearchParams(location.search).get('business') || 1;</script>
-    <script src="widget.js"></script>
+  <section class="hero">
+    <div class="container hero-grid">
+      <div>
+        <span class="eyebrow"><span class="dot" id="status-dot"></span><span id="status-text">Conectando…</span></span>
+        <h1>Pruébalo en <span class="highlight">vivo</span></h1>
+        <p class="lead">Un único widget que sirve a varios negocios. Cada uno responde con sus propias FAQ
+          y, si no hay una respuesta exacta, un modelo de lenguaje que corre en este mismo servidor.</p>
+        <div class="biz-picker">
+          <small>Elige el negocio</small>
+          <div class="biz-list" id="biz-list"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Prueba con estas preguntas</h3>
+        <p class="hint">Salen de las FAQ del negocio. Pulsa una y se envía en el chat.</p>
+        <div class="chips" id="chips"><p class="empty">Cargando…</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="container">
+      <div class="section-heading">
+        <span>Cómo responde</span>
+        <h2>Qué pasa cuando envías un mensaje</h2>
+        <p>Lo barato primero: el modelo solo trabaja cuando hace falta.</p>
+      </div>
+      <div class="steps">
+        <div class="step"><div class="n">1</div><h4>Busca en las FAQ</h4>
+          <p>Ordena las FAQ del negocio por parecido con la pregunta (<code>rapidfuzz</code>).</p></div>
+        <div class="step"><div class="n">2</div><h4>Coincidencia clara → al instante</h4>
+          <p>Si una FAQ coincide de sobra, se devuelve tal cual: sin modelo y en milisegundos.</p></div>
+        <div class="step"><div class="n">3</div><h4>Si no, genera el modelo</h4>
+          <p>Un LLM local (<code>llama.cpp</code>) redacta la respuesta con las FAQ más parecidas como contexto
+            y la envía palabra a palabra (SSE).</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" style="padding-top:0">
+    <div class="container">
+      <div class="section-heading">
+        <span>Integración</span>
+        <h2>En cualquier web con dos líneas</h2>
+      </div>
+      <div class="embed"><pre><span class="c">&lt;!-- El negocio se elige por su ID --&gt;</span>
+<span class="t">&lt;script&gt;</span>window.CHATBOT_BUSINESS_ID = <span class="s" id="embed-id">1</span>;<span class="t">&lt;/script&gt;</span>
+<span class="t">&lt;script</span> <span class="a">src</span>=<span class="s">"<span id="embed-src">https://tu-servidor</span>/widget.js"</span> <span class="a">defer</span><span class="t">&gt;&lt;/script&gt;</span></pre></div>
+    </div>
+  </section>
+
+  <footer>Chatbot AI · FastAPI + llama.cpp · <a href="https://github.com/nachoGR8/ChatBot">Código en GitHub</a></footer>
+
+  <!-- El negocio se elige con ?business=ID -->
+  <script>window.CHATBOT_BUSINESS_ID = new URLSearchParams(location.search).get('business') || 1;</script>
+  <script src="widget.js"></script>
+  <script>
+    (function () {
+      const id = String(window.CHATBOT_BUSINESS_ID);
+      const $ = (s) => document.getElementById(s);
+      const el = (tag, props) => Object.assign(document.createElement(tag), props);
+
+      $('embed-id').textContent = id;
+      $('embed-src').textContent = location.origin.startsWith('http') ? location.origin : 'https://tu-servidor';
+
+      function ask(text) {
+        const w = window.chatbotWidget;
+        if (!w) return;
+        if (!w.isOpen) w.toggleWidget();
+        if (!text) return;
+        $('chatbot-input').value = text;
+        w.sendMessage();
+      }
+
+      fetch('/health').then((r) => r.ok).catch(() => false).then((ok) => {
+        $('status-dot').classList.toggle('ok', ok);
+        $('status-text').textContent = ok ? 'Demo en vivo' : 'Servidor sin conexión';
+      });
+
+      fetch('/businesses').then((r) => r.json()).then((list) => {
+        const active = list.filter((b) => b.active !== false);
+        const current = active.find((b) => String(b.id) === id);
+        if (current) {
+          document.title = `${current.name} · Demo en vivo`;
+        }
+        active.forEach((b) => $('biz-list').appendChild(el('a', {
+          href: `?business=${b.id}`, textContent: b.name, className: String(b.id) === id ? 'active' : '',
+        })));
+        if (!active.length) $('biz-list').appendChild(el('span', { className: 'empty', textContent: 'Aún no hay negocios: créalos en Admin.' }));
+      }).catch(() => {});
+
+      fetch(`/faqs/${encodeURIComponent(id)}`).then((r) => r.ok ? r.json() : []).then((faqs) => {
+        const box = $('chips');
+        box.innerHTML = '';
+        faqs.slice(0, 4).forEach((f) => box.appendChild(el('button', {
+          className: 'chip', textContent: f.question, onclick: () => ask(f.question),
+        })));
+        if (!faqs.length) box.appendChild(el('p', { className: 'empty', textContent: 'Este negocio aún no tiene FAQ.' }));
+        box.appendChild(el('button', { className: 'chip free', textContent: 'Escribir mi propia pregunta', onclick: () => ask('') }));
+      }).catch(() => {});
+    })();
+  </script>
 </body>
 </html>
