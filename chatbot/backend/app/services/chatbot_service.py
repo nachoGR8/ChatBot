@@ -121,7 +121,7 @@ class ChatbotService:
         self.model = None
         self.model_name = self._resolve_model_name()
         self.model_failed = False
-        self.generate_timeout = 30.0
+        self.generate_timeout = float(os.getenv("CHATBOT_GENERATE_TIMEOUT", "30"))
         self._init_lock = threading.Lock()
         self._generate_lock = threading.Lock()  # llama.cpp/GPT4All no son thread-safe: una generación a la vez
         self._initializing = False

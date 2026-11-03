@@ -70,6 +70,8 @@ Opcionales: `window.CHATBOT_POSITION` (`bottom-right`, `bottom-left`, `top-right
 | `CHATBOT_PRELOAD` | `0` (`1` al lanzar con `python -m backend.main`) | Cargar el modelo al arrancar. |
 | `LLAMA_N_THREADS` / `LLAMA_N_GPU_LAYERS` / `LLAMA_N_BATCH` | `8` / `40` / `512` | Ajustes de llama.cpp (`LLAMA_N_GPU_LAYERS=0` para CPU). |
 | `GPT4ALL_CONTEXT_WINDOW` | `2048` | Ventana de contexto. |
+| `CHATBOT_GENERATE_TIMEOUT` | `30` | Segundos máximos por respuesta del modelo (en CPU lenta, súbelo a 120–180). |
+| `LLAMA_N_THREADS` | `8` | Hilos de CPU para llama.cpp; usa el número de núcleos físicos. |
 | `CHATBOT_MAX_FAQS`, `CHATBOT_MAX_HISTORY_TURNS`, `CHATBOT_RESERVE_RESPONSE_TOKENS` | `4`, `4`, `200` | Tamaño del contexto enviado al modelo. |
 
 ## API principal
