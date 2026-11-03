@@ -1,0 +1,7 @@
+**/__pycache__
+backend/models
+logs
+storage
+*.db
+tests
+eval

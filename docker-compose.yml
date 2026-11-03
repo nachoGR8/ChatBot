@@ -1,0 +1,14 @@
+services:
+  chatbot:
+    build: ./chatbot
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      DATABASE_URL: sqlite:////data/chatbot.db
+    volumes:
+      - ./chatbot/backend/models:/app/backend/models:ro   # aquí va el .gguf
+      - chatbot-data:/data
+    restart: unless-stopped
+volumes:
+  chatbot-data:

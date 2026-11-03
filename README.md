@@ -119,6 +119,17 @@ Cópialo a `backend/models/` y arranca con `CHATBOT_MODEL_NAME=Llama-3.2-3B-Inst
 (el backend solo se deduce solo si el nombre del fichero contiene `meta-llama`). Además: `CHATBOT_MAX_FAQS=2`, y probar distintos `LLAMA_N_THREADS` con el benchmark.
 Sube `CHATBOT_GENERATE_TIMEOUT` si tu equipo tarda más de 30 s.
 
+## Docker
+
+```bash
+cp .env.example .env                      # edita ADMIN_API_KEY
+# copia el .gguf a chatbot/backend/models/
+docker compose up --build                 # http://localhost:8000/demo.html
+```
+
+El modelo no va en la imagen: se monta como volumen de solo lectura. La base de datos persiste en el volumen `chatbot-data`.
+Inicializa los datos con `docker compose run --rm chatbot python -m backend.main --init-db`.
+
 ## Calidad: tests y evaluación
 
 - **Tests** (`pytest`, sin modelo ni red: usan un LLM falso y SQLite temporal). Cubren la selección de FAQs, el umbral de coincidencia directa
