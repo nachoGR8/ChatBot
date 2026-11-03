@@ -123,6 +123,7 @@ class ChatbotService:
         self.model_failed = False
         self.generate_timeout = 30.0
         self._init_lock = threading.Lock()
+        self._generate_lock = threading.Lock()  # llama.cpp/GPT4All no son thread-safe: una generación a la vez
         self._initializing = False
         self._device = None
         self._backend = None
@@ -430,15 +431,16 @@ class ChatbotService:
         top_k: int = 40,
     ) -> str:
         """Genera texto con el backend cargado (llama.cpp o GPT4All). Requiere el modelo inicializado."""
-        if self._backend == "llama_cpp":
-            out = self.model(prompt=prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p)
-            try:
-                return out["choices"][0]["text"]
-            except (KeyError, IndexError, TypeError):
-                return str(out)
-        return str(
-            self.model.generate(prompt, max_tokens=max_tokens, temp=temperature, top_p=top_p, top_k=top_k)
-        )
+        with self._generate_lock:
+            if self._backend == "llama_cpp":
+                out = self.model(prompt=prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p)
+                try:
+                    return out["choices"][0]["text"]
+                except (KeyError, IndexError, TypeError):
+                    return str(out)
+            return str(
+                self.model.generate(prompt, max_tokens=max_tokens, temp=temperature, top_p=top_p, top_k=top_k)
+            )
 
     @staticmethod
     def _clean_response(response: str, wants_menu: bool) -> str:
