@@ -608,45 +608,117 @@
             document.getElementById('chatbot-messages').scrollTop = document.getElementById('chatbot-messages').scrollHeight;
         }
 
+        // Burbuja vacía del bot que se va rellenando mientras llega la respuesta en streaming
+        addStreamingBubble() {
+            const messagesContainer = document.getElementById('chatbot-messages');
+            const typingIndicator = document.getElementById('chatbot-typing');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'chatbot-message bot';
+            const bubble = document.createElement('div');
+            bubble.className = 'chatbot-message-bubble';
+            messageDiv.appendChild(bubble);
+            messagesContainer.insertBefore(messageDiv, typingIndicator);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            return bubble;
+        }
+
         async sendMessage() {
             const input = document.getElementById('chatbot-input');
             const message = input.value.trim();
-            
+
             if (!message || this.isTyping) return;
-            
+
             this.addMessage(message, true);
             input.value = '';
             this.setTyping(true);
-            
+
+            const payload = {
+                message: message,
+                session_id: this.sessionId,
+                business_id: CONFIG.businessId
+            };
+
             try {
-                const response = await fetch(`${CONFIG.apiUrl}/chat`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        message: message,
-                        session_id: this.sessionId,
-                        business_id: CONFIG.businessId
-                    })
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                
-                const data = await response.json();
-                
-                setTimeout(() => {
-                    this.setTyping(false);
-                    this.addMessage(data.response);
-                }, 500);
-                
+                await this.streamReply(payload);
             } catch (error) {
                 console.error('Error:', error);
-                this.setTyping(false);
                 this.addMessage('Lo siento, ha ocurrido un error. Por favor intenta de nuevo.');
+            } finally {
+                this.setTyping(false);
             }
+        }
+
+        // Respuesta en streaming (SSE). Si el servidor no lo soporta, usa /chat.
+        async streamReply(payload) {
+            const response = await fetch(`${CONFIG.apiUrl}/chat/stream`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (response.status === 404 || response.status === 405) {
+                return this.replyWithoutStreaming(payload);
+            }
+            if (!response.ok || !response.body) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            const messagesContainer = document.getElementById('chatbot-messages');
+            let buffer = '';
+            let raw = '';
+            let finalText = null;
+            let bubble = null;
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+
+                let end;
+                while ((end = buffer.indexOf('\n\n')) >= 0) {
+                    const line = buffer.slice(0, end).trim();
+                    buffer = buffer.slice(end + 2);
+                    if (!line.startsWith('data:')) continue;
+                    const event = JSON.parse(line.slice(5));
+
+                    if (event.delta) {
+                        raw += event.delta;
+                        if (!bubble) {
+                            document.getElementById('chatbot-typing').classList.remove('active');
+                            bubble = this.addStreamingBubble();
+                        }
+                        bubble.textContent = raw;
+                        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                    }
+                    if (typeof event.final === 'string') finalText = event.final;
+                }
+            }
+
+            const text = finalText !== null ? finalText : raw;
+            if (!text) throw new Error('Respuesta vacía');
+
+            if (bubble) {
+                // Sustituye el texto en bruto por la versión limpia y con formato
+                bubble.innerHTML = renderMarkdown(text);
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            } else {
+                this.addMessage(text);
+            }
+        }
+
+        async replyWithoutStreaming(payload) {
+            const response = await fetch(`${CONFIG.apiUrl}/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const data = await response.json();
+            this.addMessage(data.response);
         }
     }
 

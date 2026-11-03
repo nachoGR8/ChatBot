@@ -10,7 +10,8 @@ import time
 import unicodedata
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from dataclasses import dataclass
+from typing import Any, Callable, Iterator, List, Optional, Union
 
 from rapidfuzz import fuzz
 
@@ -24,6 +25,18 @@ _STOPWORDS = frozenset(
     "cual cuales quien quienes donde cuando hay tiene tienen puedo puede pueden quiero quieres hola buenas "
     "dime saber sobre algo muy mas".split()
 )
+
+@dataclass(frozen=True)
+class GenerationPlan:
+    """Todo lo necesario para pedirle una respuesta al modelo (ya con el prompt montado)."""
+
+    system: str
+    user: str
+    max_tokens: int
+    temperature: float
+    top_p: float
+    wants_menu: bool
+
 
 MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
 DEFAULT_MODEL_FILE = "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf"
@@ -480,6 +493,45 @@ class ChatbotService:
             max_tokens=max_tokens, temperature=temperature, top_p=top_p, top_k=top_k,
         )
 
+    def generate_chat_stream(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int,
+        temperature: float,
+        top_p: float = 0.85,
+        top_k: int = 40,
+        should_stop: Callable[[], bool] = lambda: False,
+    ) -> Iterator[str]:
+        """Igual que `generate_chat`, pero devuelve el texto a trozos según se genera.
+
+        Mantiene el lock de generación mientras dure; `should_stop` permite abortar (cliente desconectado, timeout).
+        """
+        with self._generate_lock:
+            if self._backend == "llama_cpp":
+                pieces = (
+                    chunk["choices"][0]["delta"].get("content") or ""
+                    for chunk in self.model.create_chat_completion(
+                        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                        top_k=top_k,
+                        stream=True,
+                    )
+                )
+            else:
+                pieces = self.model.generate(
+                    f"{system}\n\nCliente: {user}\n\nRespuesta:",
+                    max_tokens=max_tokens, temp=temperature, top_p=top_p, top_k=top_k, streaming=True,
+                )
+            for piece in pieces:
+                if should_stop():
+                    break
+                if piece:
+                    yield piece
+
     @staticmethod
     def _clean_response(response: str, wants_menu: bool) -> str:
         """Quita restos del prompt y repeticiones, y ajusta formato y longitud de la respuesta."""
@@ -728,7 +780,7 @@ El cliente quiere conocer el menú del negocio. Responde siguiendo estas pautas:
             context += default_behavior_instructions
         return context
 
-    def get_response(
+    def plan_response(
         self,
         message: str,
         context: str,
@@ -744,7 +796,8 @@ El cliente quiere conocer el menú del negocio. Responde siguiendo estas pautas:
         wants_all_rules: bool = False,
         wants_menu: Optional[bool] = None,
         num_faqs_in_context: int = 4,
-    ) -> str:
+    ) -> Union[str, GenerationPlan]:
+        """Decide cómo responder: devuelve un texto ya resuelto (saludos, servicio caído) o un plan para el modelo."""
         if self.model_failed:
             try:
                 phone = context.split("Teléfono: ")[1].splitlines()[0]
@@ -966,26 +1019,37 @@ El cliente quiere conocer el menú del negocio. Responde siguiendo estas pautas:
         else:
             max_tokens_out = 300  # Tokens para respuestas normales
 
+        return GenerationPlan(
+            system=system_prompt,
+            user=message,
+            max_tokens=max_tokens_out,
+            temperature=temp_value,
+            top_p=top_p_value,
+            wants_menu=bool(wants_menu),
+        )
+
+    def get_response(self, message: str, context: str, **kwargs: Any) -> str:
+        """Respuesta completa (sin streaming). Ver `plan_response` para los argumentos."""
+        plan = self.plan_response(message, context, **kwargs)
+        if isinstance(plan, str):
+            return plan
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                 fut = ex.submit(
                     self.generate_chat,
-                    system_prompt,
-                    message,
-                    max_tokens=max_tokens_out,
-                    temperature=temp_value,
-                    top_p=top_p_value,
+                    plan.system,
+                    plan.user,
+                    max_tokens=plan.max_tokens,
+                    temperature=plan.temperature,
+                    top_p=plan.top_p,
                 )
                 response = fut.result(timeout=self.generate_timeout)
-
-            return self._clean_response(response, wants_menu)
-
+            return self._clean_response(response, plan.wants_menu)
         except Exception as e:  # pragma: no cover - best effort logging
             logger.exception("Error en get_response: %s", e, exc_info=True)
             return "Lo siento, ha ocurrido un error generando la respuesta."
 
-    
 
 chatbot_service = ChatbotService()
 
-__all__ = ["ChatbotService", "chatbot_service"]
+__all__ = ["ChatbotService", "GenerationPlan", "chatbot_service"]

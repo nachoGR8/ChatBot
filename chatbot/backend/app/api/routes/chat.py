@@ -3,15 +3,20 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import json
 import logging
 import random
 import re
+import threading
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from ...database import SessionLocal
 from ...models import Business, Conversation, FAQ
 from ...schemas import ChatMessage, ChatResponse
 from ..dependencies import get_db
@@ -102,8 +107,26 @@ def _best_faq_match(faqs: List[FAQ], text: str) -> Optional[FAQ]:
     return best if best_ratio >= FUZZY_MATCH_THRESHOLD else None
 
 
-@router.post("/chat", response_model=ChatResponse)
-async def chat(message: ChatMessage, db: Session = Depends(get_db)):
+@dataclass
+class _Prepared:
+    """Resultado de preparar un mensaje: o ya hay respuesta (sin LLM) o hay que generarla con el modelo."""
+
+    answer: Optional[str] = None  # respuesta directa (FAQ, aviso...)
+    save: bool = True  # guardar la conversación
+    delay: bool = False  # aplicar la pausa natural
+    context: str = ""
+    kwargs: dict = field(default_factory=dict)  # argumentos para chatbot_service.plan_response
+    phone: str = "el negocio"
+
+
+TIMEOUT_MESSAGE = (
+    "Lo siento, estoy tardando demasiado al generar la respuesta. Por favor inténtalo de nuevo o contacta con {phone}."
+)
+ERROR_MESSAGE = "Lo siento, estamos teniendo problemas técnicos. Por favor contacta con {phone}."
+
+
+def _prepare_chat(message: ChatMessage, db: Session) -> _Prepared:
+    """Pasos comunes de /chat y /chat/stream: negocio, FAQs directas, contexto y ajuste a la ventana del modelo."""
     business = db.query(Business).filter(Business.id == message.business_id).first()
     if not business:
         raise HTTPException(status_code=404, detail="Negocio no encontrado")
@@ -116,9 +139,7 @@ async def chat(message: ChatMessage, db: Session = Depends(get_db)):
     if critical:
         answer = _critical_faq_answer(faqs, critical)
         if answer:
-            _save_conversation(db, message, answer)
-            await _natural_delay()
-            return ChatResponse(response=answer, timestamp=datetime.utcnow())
+            return _Prepared(answer=answer, delay=True)
 
     # 2) Quedarse solo con las FAQs relevantes para no confundir al modelo
     message_lower = message.message.lower()
@@ -139,14 +160,12 @@ async def chat(message: ChatMessage, db: Session = Depends(get_db)):
     # 3) Pregunta casi idéntica a una FAQ: responder sin LLM ni construir contexto
     matched_faq = _best_faq_match(faqs, message.message)
     if matched_faq:
-        answer = (matched_faq.answer or "").strip()
-        _save_conversation(db, message, answer)
-        return ChatResponse(response=answer, timestamp=datetime.utcnow())
+        return _Prepared(answer=(matched_faq.answer or "").strip())
 
     # 4) Hace falta el modelo
     notice = chatbot_service.ensure_ready()
     if notice:
-        return ChatResponse(response=notice, timestamp=datetime.utcnow())
+        return _Prepared(answer=notice, save=False)
 
     # 5) Construir contexto
     if wants_all_rules:
@@ -242,46 +261,141 @@ async def chat(message: ChatMessage, db: Session = Depends(get_db)):
         head = full[: max(0, max_chars - len(tail))]
         context = head + tail
 
-    # 7) Generar (en un hilo, para no bloquear el event loop)
-    phone = business.phone or "el negocio"
+    return _Prepared(
+        context=context,
+        phone=business.phone or "el negocio",
+        kwargs=dict(
+            temperature=business.generation_temperature,
+            top_p=business.generation_top_p,
+            welcome_message=None if conversation_started else business.welcome_message,
+            suppress_greeting=conversation_started,
+            customer_name=customer_name,
+            name_already_used=name_already_used,
+            db=db,
+            business=business,
+            wants_all_rules=wants_all_rules,
+            wants_menu=is_critical_request and critical["type"] == "menú",
+            num_faqs_in_context=num_faqs_for_context,
+        ),
+    )
+
+
+@router.post("/chat", response_model=ChatResponse)
+async def chat(message: ChatMessage, db: Session = Depends(get_db)):
+    prep = _prepare_chat(message, db)
+    if prep.answer is not None:
+        if prep.save:
+            _save_conversation(db, message, prep.answer)
+        if prep.delay:
+            await _natural_delay()
+        return ChatResponse(response=prep.answer, timestamp=datetime.utcnow())
+
+    # Generar (en un hilo, para no bloquear el event loop)
     loop = asyncio.get_running_loop()
     try:
         bot_response = await asyncio.wait_for(
             loop.run_in_executor(
-                None,
-                lambda: chatbot_service.get_response(
-                    message.message,
-                    context,
-                    temperature=business.generation_temperature,
-                    top_p=business.generation_top_p,
-                    welcome_message=None if conversation_started else business.welcome_message,
-                    suppress_greeting=conversation_started,
-                    customer_name=customer_name,
-                    name_already_used=name_already_used,
-                    db=db,
-                    business=business,
-                    wants_all_rules=wants_all_rules,
-                    wants_menu=is_critical_request and critical["type"] == "menú",
-                    num_faqs_in_context=num_faqs_for_context,
-                ),
+                None, lambda: chatbot_service.get_response(message.message, prep.context, **prep.kwargs)
             ),
             timeout=chatbot_service.generate_timeout + 5,
         )
     except asyncio.TimeoutError:
-        bot_response = (
-            "Lo siento, estoy tardando demasiado al generar la respuesta. Por favor inténtalo de nuevo o contacta con "
-            f"{phone}."
-        )
+        bot_response = TIMEOUT_MESSAGE.format(phone=prep.phone)
     except Exception:
         logger.exception("Error generando la respuesta")
-        bot_response = (
-            "Lo siento, estamos teniendo problemas técnicos. Por favor contacta con "
-            f"{phone}."
-        )
+        bot_response = ERROR_MESSAGE.format(phone=prep.phone)
 
     _save_conversation(db, message, bot_response)
     await _natural_delay()
     return ChatResponse(response=bot_response, timestamp=datetime.utcnow())
+
+
+def _sse(payload: dict) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _save_conversation_new_session(message: ChatMessage, bot_response: str) -> None:
+    """La sesión de la petición puede estar cerrada cuando termina el streaming: se usa una propia."""
+    db = SessionLocal()
+    try:
+        _save_conversation(db, message, bot_response)
+    finally:
+        db.close()
+
+
+@router.post("/chat/stream")
+async def chat_stream(message: ChatMessage, db: Session = Depends(get_db)):
+    """Igual que /chat pero en Server-Sent Events: `{"delta": "..."}` por trozo y `{"final": "...", "done": true}` al terminar.
+
+    `final` es el texto limpio definitivo (el cliente debe sustituir con él lo que haya ido pintando).
+    """
+    prep = _prepare_chat(message, db)
+    plan = None
+    if prep.answer is None:
+        plan = chatbot_service.plan_response(message.message, prep.context, **prep.kwargs)
+        if isinstance(plan, str):  # saludo o servicio no disponible: no hace falta generar
+            prep, plan = _Prepared(answer=plan), None
+
+    async def events():
+        if plan is None:
+            if prep.save:
+                _save_conversation_new_session(message, prep.answer)
+            yield _sse({"final": prep.answer, "done": True})
+            return
+
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+        stop = threading.Event()
+
+        def pump() -> None:  # hilo que genera y va pasando los trozos al event loop
+            try:
+                for piece in chatbot_service.generate_chat_stream(
+                    plan.system,
+                    plan.user,
+                    max_tokens=plan.max_tokens,
+                    temperature=plan.temperature,
+                    top_p=plan.top_p,
+                    should_stop=stop.is_set,
+                ):
+                    loop.call_soon_threadsafe(queue.put_nowait, ("delta", piece))
+            except Exception:
+                logger.exception("Error generando la respuesta (streaming)")
+                loop.call_soon_threadsafe(queue.put_nowait, ("error", ""))
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, ("end", ""))
+
+        loop.run_in_executor(None, pump)
+        deadline = loop.time() + chatbot_service.generate_timeout + 5
+        parts: List[str] = []
+        failure: Optional[str] = None
+        try:
+            while True:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    raise asyncio.TimeoutError
+                kind, value = await asyncio.wait_for(queue.get(), timeout=remaining)
+                if kind == "delta":
+                    parts.append(value)
+                    yield _sse({"delta": value})
+                else:
+                    failure = ERROR_MESSAGE if kind == "error" else None
+                    break
+        except asyncio.TimeoutError:
+            failure = TIMEOUT_MESSAGE
+        finally:
+            stop.set()  # corta la generación si el cliente se fue o se agotó el tiempo
+
+        final = chatbot_service._clean_response("".join(parts), plan.wants_menu)
+        if not final:
+            final = (failure or ERROR_MESSAGE).format(phone=prep.phone)
+        _save_conversation_new_session(message, final)
+        yield _sse({"final": final, "done": True})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/conversations/{business_id}")

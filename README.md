@@ -80,6 +80,7 @@ Opcionales: `window.CHATBOT_POSITION` (`bottom-right`, `bottom-left`, `top-right
 | Método y ruta | Descripción |
 |---|---|
 | `POST /chat` | Mensaje `{business_id, session_id, message}` → respuesta |
+| `POST /chat/stream` | Igual que `/chat`, pero en streaming (SSE): eventos `{"delta": "..."}` y, al final, `{"final": "...", "done": true}` con el texto limpio |
 | `GET/POST /businesses`, `GET/PUT/PATCH/DELETE /businesses/{id}` | Gestión de negocios |
 | `GET/POST /faqs`, `GET /faqs/{business_id}`, `DELETE /faqs/{id}` | Gestión de FAQs |
 | `GET /conversations/{business_id}` | Historial de conversaciones |
