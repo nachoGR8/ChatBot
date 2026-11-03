@@ -47,6 +47,10 @@ app.add_middleware(
 
 register_routes(app)
 
+# Debe ir después de las rutas de la API: sirve demo.html, widget.js, etc. desde la raíz.
+if FRONTEND_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
+
 
 @app.on_event("startup")
 def preload_model_on_startup() -> None:
