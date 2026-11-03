@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import difflib
 import json
 import logging
 import random
@@ -14,6 +13,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from rapidfuzz import fuzz
 from sqlalchemy.orm import Session
 
 from ...database import SessionLocal
@@ -27,7 +27,7 @@ router = APIRouter(tags=["chat"])
 logger = logging.getLogger("chatbot")
 
 CRITICAL_FAQ_MIN_PRIORITY = 100  # FAQs con prioridad >= 100 se devuelven tal cual, sin LLM
-FUZZY_MATCH_THRESHOLD = 0.70  # similitud mínima pregunta/FAQ para responder sin LLM
+FUZZY_MATCH_THRESHOLD = 0.85  # similitud mínima (palabras clave) pregunta/FAQ para responder sin LLM
 ALL_RULES_MAX_FAQS = 50
 
 ALL_RULES_PHRASES = (
@@ -94,14 +94,19 @@ def _critical_faq_answer(faqs: List[FAQ], critical: dict) -> Optional[str]:
 
 
 def _best_faq_match(faqs: List[FAQ], text: str) -> Optional[FAQ]:
-    """FAQ cuya pregunta se parece lo bastante al mensaje como para responder sin LLM."""
-    text = text.lower()
+    """FAQ que pregunta lo mismo que el mensaje (mismas palabras clave, tolerando erratas), para responder sin LLM.
+
+    Se comparan solo las palabras con contenido: "¿Qué estudios tiene?" no debe casar con "¿Qué certificaciones tiene?".
+    """
+    query_words = " ".join(sorted(set(chatbot_service.content_words(text))))
+    if not query_words:
+        return None
     best, best_ratio = None, 0.0
     for faq in faqs:
-        question = (faq.question or "").strip()
-        if not question:
+        question_words = " ".join(sorted(set(chatbot_service.content_words(faq.question))))
+        if not question_words:
             continue
-        ratio = difflib.SequenceMatcher(None, text, question.lower()).ratio()
+        ratio = fuzz.ratio(query_words, question_words) / 100
         if ratio > best_ratio:
             best, best_ratio = faq, ratio
     return best if best_ratio >= FUZZY_MATCH_THRESHOLD else None

@@ -103,6 +103,8 @@ Por eso el prompt está pensado para gastar poco:
   recortados alrededor de las palabras de la pregunta (y ninguno si no hay coincidencias).
 - **Caché de respuestas:** la misma pregunta en el mismo estado de conversación se responde al instante.
 - **Streaming:** `/chat/stream` muestra el texto según se genera.
+- **Calentamiento:** al cargar el modelo se hace una generación mínima (`CHATBOT_WARMUP=0` la desactiva) para que la primera pregunta real no pague la carga de pesos.
+- **Respuesta directa por FAQ solo si coincide de verdad:** se comparan las palabras clave de la pregunta con las de la FAQ (umbral 0,85).
 
 Medir en tu equipo (con el servidor en marcha):
 
@@ -110,6 +112,7 @@ Medir en tu equipo (con el servidor en marcha):
 python scripts/bench.py --business 1 "¿Quién es Ignacio?" "¿Qué tecnologías usa?"
 ```
 
-Para ir más rápido: modelo más pequeño (p. ej. Llama 3.2 3B Instruct Q4_K_M, unas 2,5 veces más rápido, con
-`CHATBOT_MODEL_NAME`), `CHATBOT_MAX_FAQS=2`, y probar distintos `LLAMA_N_THREADS` con el benchmark.
+Para ir más rápido: modelo más pequeño (p. ej. Llama 3.2 3B Instruct Q4_K_M, unas 2,5 veces más rápido).
+Cópialo a `backend/models/` y arranca con `CHATBOT_MODEL_NAME=Llama-3.2-3B-Instruct-Q4_K_M.gguf` **y `CHATBOT_BACKEND=meta-llama`**
+(el backend solo se deduce solo si el nombre del fichero contiene `meta-llama`). Además: `CHATBOT_MAX_FAQS=2`, y probar distintos `LLAMA_N_THREADS` con el benchmark.
 Sube `CHATBOT_GENERATE_TIMEOUT` si tu equipo tarda más de 30 s.

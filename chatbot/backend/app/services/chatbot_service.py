@@ -411,6 +411,15 @@ class ChatbotService:
                 n_batch=n_batch,
                 verbose=True,
             )
+            if os.getenv("CHATBOT_WARMUP", "1") == "1":
+                # Una generación mínima ahora evita que la primera pregunta real pague la carga de pesos en memoria
+                try:
+                    self.model.create_chat_completion(
+                        messages=[{"role": "system", "content": "Responde brevemente."}, {"role": "user", "content": "hola"}],
+                        max_tokens=1,
+                    )
+                except Exception as warm_exc:  # pragma: no cover - el calentamiento es opcional
+                    logger.warning("Calentamiento del modelo omitido: %s", warm_exc)
             self._mark_loaded("cuda" if n_gpu_layers > 0 else "cpu", "llama_cpp")
             logger.info("✅ Meta-Llama cargado via llama_cpp (%s)", self._device)
         except Exception as exc:  # pragma: no cover - best effort GPU init
@@ -696,15 +705,16 @@ class ChatbotService:
         decomposed = unicodedata.normalize("NFD", (text or "").lower())
         return "".join(c for c in decomposed if unicodedata.category(c) != "Mn")
 
+    def content_words(self, text: Optional[str]) -> List[str]:
+        """Palabras con contenido (sin tildes, sin palabras vacías) de un texto."""
+        return [w for w in re.findall(r"\w+", self._normalize(text or "")) if len(w) > 2 and w not in _STOPWORDS]
+
     def _rank_faqs(self, faqs: List[FAQ], query: Optional[str]) -> List[FAQ]:
         """Ordena las FAQs por relevancia respecto a la pregunta; sin pregunta, solo por prioridad."""
         def priority(f: FAQ) -> int:
             return getattr(f, "priority", 0) or 0
 
-        keywords = [
-            w for w in re.findall(r"\w+", self._normalize(query or ""))
-            if len(w) > 2 and w not in _STOPWORDS
-        ]
+        keywords = self.content_words(query)
         if not keywords:
             return sorted(faqs, key=priority, reverse=True)
 
