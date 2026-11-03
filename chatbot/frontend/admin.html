@@ -1264,7 +1264,13 @@
     // CONFIGURACIÓN
     // =====================================================
     const baseUrl = 'http://127.0.0.1:8000';
-    const apiKey = 'nacho123'; // API Key para autenticación
+    // La clave (ADMIN_API_KEY del servidor) se pide al abrir el panel y solo se guarda en esta pestaña.
+    let apiKey = '';
+    try { apiKey = sessionStorage.getItem('chatbot_admin_key') || ''; } catch (e) {}
+    if (!apiKey) {
+      apiKey = (window.prompt('Clave de administrador (ADMIN_API_KEY del servidor):') || '').trim();
+      try { sessionStorage.setItem('chatbot_admin_key', apiKey); } catch (e) {}
+    }
     let selectedBusiness = null;
     let pendingFiles = [];
 
