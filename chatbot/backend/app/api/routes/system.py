@@ -63,20 +63,7 @@ async def serve_admin_html() -> FileResponse:
 
 @router.get("/status")
 def status() -> dict[str, object]:
-    try:
-        st = chatbot_service.status()
-        st.update(
-            {
-                "max_faqs": chatbot_service.max_faqs,
-                "faq_answer_max_chars": chatbot_service.faq_answer_max_chars,
-                "context_window": chatbot_service.context_window,
-                "context_token_ratio": chatbot_service.context_token_ratio,
-                "reserve_response_tokens": chatbot_service.reserve_response_tokens,
-            }
-        )
-        return {"ok": True, "status": st}
-    except Exception as exc:  # pragma: no cover - defensive
-        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "status": chatbot_service.status()}
 
 
 @router.get("/health")

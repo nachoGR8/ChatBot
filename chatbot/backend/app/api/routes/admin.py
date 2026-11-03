@@ -141,14 +141,13 @@ def admin_ensure_gym_faqs(db: Session = Depends(get_db)):
 def admin_model_status():
     status = {
         "model_present": chatbot_service.model is not None,
-        "initializing": getattr(chatbot_service, "_initializing", False),
-        "failed": getattr(chatbot_service, "model_failed", False),
-        "backend": getattr(chatbot_service, "_backend", None),
-        "device": getattr(chatbot_service, "_device", None),
+        "initializing": chatbot_service._initializing,
+        "failed": chatbot_service.model_failed,
+        "backend": chatbot_service._backend,
+        "device": chatbot_service._device,
     }
-    model = getattr(chatbot_service, "model", None)
+    model = chatbot_service.model
     if model is not None:
-        status["model_present"] = True
         try:
             status["backend"] = model.backend
             status["device"] = model.device
@@ -159,31 +158,15 @@ def admin_model_status():
 
 @router.post("/clear_model_failure")
 def admin_clear_model_failure():
-    chatbot_service.model_failed = False
-    try:
-        chatbot_service._failed_at = None
-    except Exception:
-        pass
-
-    if chatbot_service.model is None and not getattr(chatbot_service, "_initializing", False):
-        try:
-            threading.Thread(target=chatbot_service.initialize_model, daemon=True).start()
-        except Exception:
-            pass
-
+    chatbot_service.reset_failure()
+    if chatbot_service.model is None and not chatbot_service._initializing:
+        threading.Thread(target=chatbot_service.initialize_model, daemon=True).start()
     return {"ok": True, "model_failed": chatbot_service.model_failed}
 
 
 @router.post("/reinit_model")
 def admin_reinit_model():
     chatbot_service.model = None
-    chatbot_service.model_failed = False
-    try:
-        chatbot_service._failed_at = None
-    except Exception:
-        pass
-    try:
-        threading.Thread(target=chatbot_service.initialize_model, daemon=True).start()
-    except Exception:
-        return {"ok": False, "error": "No se pudo lanzar reinit"}
+    chatbot_service.reset_failure()
+    threading.Thread(target=chatbot_service.initialize_model, daemon=True).start()
     return {"ok": True, "message": "Reinicialización disparada"}

@@ -2,56 +2,126 @@
 from __future__ import annotations
 
 import concurrent.futures
-import difflib
 import logging
 import os
 import re
 import threading
 import time
-import traceback
 import unicodedata
 from datetime import datetime
+from pathlib import Path
 from typing import List, Optional
 
-from gpt4all import GPT4All
-
-from ..models import Business, Conversation, FAQ
+from ..models import Business, Conversation, DocumentChunk, FAQ
 
 logger = logging.getLogger("chatbot")
+
+MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
+DEFAULT_MODEL_FILE = "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf"
+FALLBACK_MODEL = "orca-mini-3b-gguf2-q4_0.gguf"
+
+# Tipos de información que se responden directo desde una FAQ prioritaria.
+# ORDEN IMPORTANTE: los más específicos primero para evitar conflictos.
+# (menú va al final para no pisar patrones más específicos)
+_CRITICAL_TYPES = {
+    'clases': {
+        'patterns': [
+            r'\bclases?\b',
+            r'\bhorarios?\b',
+            r'\bactividades?\b',
+            r'\bentrenamientos?\b',
+            r'\bsesiones?\b',
+            r'qué (clases|actividades) (hay|tienen|ofrecen)',
+        ],
+        'keywords': ['clases', 'clase', 'horarios', 'actividades', 'entrenamiento'],
+        'emoji': '💪'
+    },
+    'productos': {
+        'patterns': [
+            r'\bproductos?\b',
+            r'\bcatálogos?\b',
+            r'\bartículos?\b',
+            r'\barticulos?\b',
+            r'\binventario\b',
+            r'\bmercancías?\b',
+            r'qué (productos|artículos) (hay|tienen|venden)',
+            r'lista de (productos|artículos)',
+            r'catálogo (completo|de productos)',
+            r'tienen.*inventario',
+            r'artículos\s+disponibles',
+        ],
+        'keywords': ['productos', 'producto', 'catálogo', 'artículos', 'inventario'],
+        'emoji': '🛍️'
+    },
+    'servicios': {
+        'patterns': [
+            r'\bservicios?\b',
+            r'\btratamientos?\b',
+            r'\bpaquetes?\b',
+            r'\bofertas?\b',
+            r'qué (servicios|tratamientos) (hay|tienen|ofrecen)',
+        ],
+        'keywords': ['servicios', 'servicio', 'tratamientos', 'paquetes', 'ofertas'],
+        'emoji': '📋'
+    },
+    'habitaciones': {
+        'patterns': [
+            r'\bhabitaciones?\b',
+            r'\bcuartos?\b',
+            r'\bsuites?\b',
+            r'\balojamientos?\b',
+            r'tipos de (habitaciones|cuartos|alojamiento)',
+        ],
+        'keywords': ['habitaciones', 'habitación', 'cuartos', 'suites', 'alojamiento'],
+        'emoji': '🏨'
+    },
+    'tarifas': {
+        'patterns': [
+            r'\btarifas?\b',
+            r'\bprecios?\b',
+            r'\bcostos?\b',
+            r'\bcuánto (cuesta|vale)',
+            r'lista de precios',
+        ],
+        'keywords': ['tarifas', 'tarifa', 'precios', 'precio', 'costo'],
+        'emoji': '💰'
+    },
+    'planes': {
+        'patterns': [
+            r'\bplanes?\b',
+            r'\bmembresías?\b',
+            r'\bsuscripciones?\b',
+            r'qué (planes|membresías) (hay|tienen)',
+        ],
+        'keywords': ['planes', 'plan', 'membresías', 'suscripciones'],
+        'emoji': '📝'
+    },
+    # MENÚ AL FINAL para evitar conflictos con patrones más específicos
+    'menú': {
+        'patterns': [
+            r'\bmen[úu]\b',
+            r'\bcarta\b',
+            r'\bplatos?\b',
+            r'\bcomidas?\b',
+            r'\bbebidas?\b',
+            r'\bpostres?\b',
+            r'\bespecialidades?\b',
+            r'menú (del día|completo|diario)',
+            r'qué (hay|tienen|comen|sirven) (para|de) (comer|cenar|almorzar)',
+        ],
+        'keywords': ['menú', 'menu', 'platos', 'carta', 'especialidades', 'comida'],
+        'emoji': '🍽️'
+    },
+}
+
 
 
 class ChatbotService:
     def __init__(self) -> None:
         self.model = None
-        default_model = os.path.abspath(
-            os.path.join(
-                os.path.dirname(__file__),
-                "..",
-                "..",
-                "models",
-                "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
-            )
-        )
-        env_model = os.getenv("CHATBOT_MODEL_NAME")
-        if env_model:
-            if os.path.isabs(env_model) or os.path.exists(env_model):
-                self.model_name = env_model
-            else:
-                candidate = os.path.abspath(
-                    os.path.join(os.path.dirname(__file__), "..", "..", "models", env_model)
-                )
-                self.model_name = candidate if os.path.exists(candidate) else env_model
-        else:
-            if os.path.exists(default_model):
-                self.model_name = default_model
-            else:
-                self.model_name = "orca-mini-3b-gguf2-q4_0.gguf"
+        self.model_name = self._resolve_model_name()
         self.model_failed = False
         self.generate_timeout = 30.0
-        try:
-            self.temp = float(os.getenv("CHATBOT_TEMP", "0.7"))
-        except Exception:
-            self.temp = 0.7
         self._init_lock = threading.Lock()
         self._initializing = False
         self._device = None
@@ -73,10 +143,6 @@ class ChatbotService:
         ]
         self._recommendation_pattern = re.compile(
             r"(recomiend\w*|recomendaci\w*|suger\w*|sugier\w*|aconsej\w*|qué\s+me\s+recomiendas)",
-            re.IGNORECASE,
-        )
-        self._menu_pattern = re.compile(
-            r"\b(menu|menú|carta|platos|especialidades|men\s?ú\s?principal)\b",
             re.IGNORECASE,
         )
 
@@ -168,260 +234,155 @@ class ChatbotService:
         return bool(self._recommendation_pattern.search(normalized))
 
     def is_critical_info_request(self, message: str) -> Optional[dict]:
+        """Detecta si el usuario pide información estructurada (menú, clases, precios, ...).
+
+        Devuelve {'type', 'keywords', 'emoji'} del primer tipo de _CRITICAL_TYPES cuyo
+        patrón coincide con el mensaje, o None.
         """
-        Detecta si el usuario está pidiendo información crítica estructurada 
-        (menú, clases, productos, servicios, habitaciones, etc.) de forma UNIVERSAL.
-        
-        Args:
-            message: Mensaje del usuario
-            
-        Returns:
-            Dict con 'type', 'keywords' y 'emoji' si se detecta solicitud crítica, None si no.
-            
-        Ejemplos:
-            "¿Qué tienen en el menú?" → {'type': 'menú', 'keywords': [...], 'emoji': '🍽️'}
-            "¿Qué clases hay?" → {'type': 'clases', 'keywords': [...], 'emoji': '💪'}
-            "Productos disponibles" → {'type': 'productos', 'keywords': [...], 'emoji': '🛍️'}
-        """
-        import re
-        
         message_lower = message.lower()
-        
-        # Diccionario de tipos críticos con palabras clave y emojis
-        # ORDEN IMPORTANTE: Los más específicos primero para evitar conflictos
-        critical_types = {
-            'clases': {
-                'patterns': [
-                    r'\bclases?\b',
-                    r'\bhorarios?\b',
-                    r'\bactividades?\b',
-                    r'\bentrenamientos?\b',
-                    r'\bsesiones?\b',
-                    r'qué (clases|actividades) (hay|tienen|ofrecen)',
-                ],
-                'keywords': ['clases', 'clase', 'horarios', 'actividades', 'entrenamiento'],
-                'emoji': '💪'
-            },
-            'productos': {
-                'patterns': [
-                    r'\bproductos?\b',
-                    r'\bcatálogos?\b',
-                    r'\bartículos?\b',
-                    r'\barticulos?\b',
-                    r'\binventario\b',
-                    r'\bmercancías?\b',
-                    r'qué (productos|artículos) (hay|tienen|venden)',
-                    r'lista de (productos|artículos)',
-                    r'catálogo (completo|de productos)',
-                    r'tienen.*inventario',
-                    r'artículos\s+disponibles',
-                ],
-                'keywords': ['productos', 'producto', 'catálogo', 'artículos', 'inventario'],
-                'emoji': '🛍️'
-            },
-            'servicios': {
-                'patterns': [
-                    r'\bservicios?\b',
-                    r'\btratamientos?\b',
-                    r'\bpaquetes?\b',
-                    r'\bofertas?\b',
-                    r'qué (servicios|tratamientos) (hay|tienen|ofrecen)',
-                ],
-                'keywords': ['servicios', 'servicio', 'tratamientos', 'paquetes', 'ofertas'],
-                'emoji': '📋'
-            },
-            'habitaciones': {
-                'patterns': [
-                    r'\bhabitaciones?\b',
-                    r'\bcuartos?\b',
-                    r'\bsuites?\b',
-                    r'\balojamientos?\b',
-                    r'tipos de (habitaciones|cuartos|alojamiento)',
-                ],
-                'keywords': ['habitaciones', 'habitación', 'cuartos', 'suites', 'alojamiento'],
-                'emoji': '🏨'
-            },
-            'tarifas': {
-                'patterns': [
-                    r'\btarifas?\b',
-                    r'\bprecios?\b',
-                    r'\bcostos?\b',
-                    r'\bcuánto (cuesta|vale)',
-                    r'lista de precios',
-                ],
-                'keywords': ['tarifas', 'tarifa', 'precios', 'precio', 'costo'],
-                'emoji': '💰'
-            },
-            'planes': {
-                'patterns': [
-                    r'\bplanes?\b',
-                    r'\bmembresías?\b',
-                    r'\bsuscripciones?\b',
-                    r'qué (planes|membresías) (hay|tienen)',
-                ],
-                'keywords': ['planes', 'plan', 'membresías', 'suscripciones'],
-                'emoji': '📝'
-            },
-            # MENÚ AL FINAL para evitar conflictos con patrones más específicos
-            'menú': {
-                'patterns': [
-                    r'\bmen[úu]\b',
-                    r'\bcarta\b',
-                    r'\bplatos?\b',
-                    r'\bcomidas?\b',
-                    r'\bbebidas?\b',
-                    r'\bpostres?\b',
-                    r'\bespecialidades?\b',
-                    r'menú (del día|completo|diario)',
-                    r'qué (hay|tienen|comen|sirven) (para|de) (comer|cenar|almorzar)',
-                ],
-                'keywords': ['menú', 'menu', 'platos', 'carta', 'especialidades', 'comida'],
-                'emoji': '🍽️'
-            },
-        }
-        
-        # Detectar qué tipo de información crítica se está pidiendo
-        for critical_type, config in critical_types.items():
-            for pattern in config['patterns']:
+        for critical_type, config in _CRITICAL_TYPES.items():
+            for pattern in config["patterns"]:
                 if re.search(pattern, message_lower):
-                    logger.info(f"🎯 Detectado tipo crítico: {critical_type} (patrón: {pattern})")
+                    logger.info("🎯 Detectado tipo crítico: %s (patrón: %s)", critical_type, pattern)
                     return {
-                        'type': critical_type,
-                        'keywords': config['keywords'],
-                        'emoji': config['emoji']
+                        "type": critical_type,
+                        "keywords": config["keywords"],
+                        "emoji": config["emoji"],
                     }
-        
-        # No se detectó ninguna solicitud crítica
         return None
     
-    def is_menu_request(self, message: str) -> bool:
-        """
-        DEPRECATED: Usar is_critical_info_request() en su lugar.
-        Detecta si el usuario está pidiendo el menú del restaurante.
-        """
-        result = self.is_critical_info_request(message)
-        return result is not None and result['type'] == 'menú'
-
     def extract_menu_from_documents(self, db, business_id: int) -> Optional[str]:
-        """
-        Extrae el menú estructurado directamente de los documentos procesados.
-        Busca patrones específicos de platos con precios y descripciones.
-        
-        Returns:
-            String formateado con los platos encontrados o None si no hay documentos.
-        """
+        """Extrae el menú (tabla Categoría/Plato/Descripción/Precio) de los documentos del negocio."""
         try:
-            from ..models import DocumentChunk
-            from sqlalchemy import and_
-            
-            logger.info(f"→ Buscando chunks para business_id={business_id}")
-            
-            # Buscar chunks que contengan información de menú
-            chunks = db.query(DocumentChunk).filter(
-                DocumentChunk.business_id == business_id
-            ).order_by(DocumentChunk.chunk_index).all()
-            
-            logger.info(f"→ Encontrados {len(chunks)} chunks")
-            
-            if not chunks:
-                logger.warning("→ No hay chunks disponibles")
-                return None
-            
-            # Concatenar el texto de los chunks relevantes
-            full_text = "\n".join([chunk.text for chunk in chunks])
-            logger.info(f"→ Texto total: {len(full_text)} caracteres")
-            
-            # Buscar la sección del menú principal
-            import re
-            
-            # Encontrar la tabla del menú (después de "Menú principal")
-            menu_section_match = re.search(
-                r'Menú principal\s+(.*?)(?=\n\n[A-Z]|\Z)',
-                full_text,
-                re.DOTALL | re.IGNORECASE
+            chunks = (
+                db.query(DocumentChunk)
+                .filter(DocumentChunk.business_id == business_id)
+                .order_by(DocumentChunk.chunk_index)
+                .all()
             )
-            
-            if not menu_section_match:
+            if not chunks:
+                return None
+
+            full_text = "\n".join(chunk.text for chunk in chunks)
+            match = re.search(r"Menú principal\s+(.*?)(?=\n\n[A-Z]|\Z)", full_text, re.DOTALL | re.IGNORECASE)
+            if not match:
                 logger.warning("→ No se encontró sección 'Menú principal'")
                 return None
-            
-            menu_text = menu_section_match.group(1)
-            logger.info(f"→ Sección de menú encontrada: {len(menu_text)} caracteres")
-            logger.info(f"→ Primeras 200 chars: {menu_text[:200]}")
-            
-            # Patrón para líneas de menú con formato tabular:
-            # Categoría   Plato   Descripción   Precio
-            # Usar split por múltiples espacios para detectar columnas
-            lines = menu_text.strip().split('\n')
-            logger.info(f"→ Líneas en menú: {len(lines)}")
-            
+
             dishes = []
             seen_names = set()
-            
-            # Saltar la línea de encabezados (Categoría, Plato, Descripción, Precio)
             header_found = False
-            
-            for i, line in enumerate(lines):
-                # Limpiar la línea
+            for line in match.group(1).strip().split("\n"):
                 line = line.strip()
                 if not line:
                     continue
-                
-                # Detectar encabezado
-                if 'Categoría' in line and 'Plato' in line:
+                if "Categoría" in line and "Plato" in line:
                     header_found = True
-                    logger.info(f"→ Encabezado encontrado en línea {i}")
                     continue
-                
                 if not header_found:
                     continue
-                
-                # Intentar parsear la línea dividiendo por múltiples espacios
-                # Formato: Categoría    Nombre del Plato    Descripción    Precio
-                parts = re.split(r'\s{2,}', line)
-                logger.info(f"→ Línea {i}: {len(parts)} partes - {parts[:3]}")
-                
-                if len(parts) >= 4:
-                    category = parts[0].strip()
-                    name = parts[1].strip()
-                    description = parts[2].strip()
-                    price = parts[3].strip()
-                    
-                    # Validar que no sea encabezado repetido y tenga precio numérico
-                    if (name and name not in seen_names and
-                        name.lower() not in ['plato', 'categoría', 'descripción'] and
-                        re.search(r'\d+[.,]\d+', price)):
-                        
-                        seen_names.add(name)
-                        dishes.append({
-                            'category': category,
-                            'name': name,
-                            'description': description,
-                            'price': price.replace('■', '-')  # Fix encoding issues
-                        })
-                        logger.info(f"→ Plato añadido: {name}")
-            
-            logger.info(f"→ Total platos extraídos: {len(dishes)}")
-            
-            if dishes:
-                # Formatear como lista limpia
-                formatted = "**MENÚ DISPONIBLE (platos reales del restaurante):**\n\n"
-                for dish in dishes:
-                    formatted += f"• **{dish['name']}** - {dish['description']} - {dish['price']}€\n"
-                formatted += "\n**IMPORTANTE: Estos son TODOS los platos disponibles. No existen otros platos.**"
-                return formatted
-            
-            logger.warning("→ No se extrajeron platos")
-            return None
-            
-        except Exception as e:
-            logger.error(f"→ Error extrayendo menú de documentos: {e}")
-            import traceback
-            traceback.print_exc()
+
+                parts = re.split(r"\s{2,}", line)  # Categoría   Plato   Descripción   Precio
+                if len(parts) < 4:
+                    continue
+                _, name, description, price = (p.strip() for p in parts[:4])
+                if (
+                    name
+                    and name not in seen_names
+                    and name.lower() not in ("plato", "categoría", "descripción")
+                    and re.search(r"\d+[.,]\d+", price)
+                ):
+                    seen_names.add(name)
+                    dishes.append((name, description, price.replace("■", "-")))  # fix encoding
+
+            if not dishes:
+                logger.warning("→ No se extrajeron platos")
+                return None
+
+            listing = "".join(f"• **{name}** - {desc} - {price}€\n" for name, desc, price in dishes)
+            return (
+                "**MENÚ DISPONIBLE (platos reales del restaurante):**\n\n"
+                f"{listing}"
+                "\n**IMPORTANTE: Estos son TODOS los platos disponibles. No existen otros platos.**"
+            )
+        except Exception:
+            logger.exception("Error extrayendo menú de documentos")
             return None
 
+
+    @staticmethod
+    def _resolve_model_name() -> str:
+        """CHATBOT_MODEL_NAME (ruta o fichero en models/) > Llama por defecto > orca-mini."""
+        env_model = os.getenv("CHATBOT_MODEL_NAME")
+        if env_model:
+            if os.path.isabs(env_model) or os.path.exists(env_model):
+                return env_model
+            candidate = MODELS_DIR / env_model
+            return str(candidate) if candidate.exists() else env_model
+        default_model = MODELS_DIR / DEFAULT_MODEL_FILE
+        return str(default_model) if default_model.exists() else FALLBACK_MODEL
+
+    def reset_failure(self) -> None:
+        self.model_failed = False
+        self._failed_at = None
+
+    def ensure_ready(self) -> Optional[str]:
+        """None si el modelo está listo; si no, lanza la carga en segundo plano y devuelve un aviso para el cliente."""
+        if self.model_failed and self.model is not None:
+            self.reset_failure()
+        if self.model is not None:
+            return None
+        if self._initializing:
+            return "El modelo se está inicializando. Por favor espera unos segundos y vuelve a intentarlo."
+        threading.Thread(target=self.initialize_model, daemon=True).start()
+        return "El modelo se está preparando. Intenta de nuevo en unos segundos."
+
+    def _mark_loaded(self, device: str, backend: str) -> None:
+        self._device = device
+        self._backend = backend
+        self._loaded_at = datetime.utcnow()
+        self.reset_failure()
+
+    def _load_llama_cpp(self) -> None:
+        """Intenta cargar el modelo con llama.cpp; si falla, deja self.model en None."""
+        try:
+            from llama_cpp import Llama  # type: ignore
+
+            n_threads = int(os.getenv("LLAMA_N_THREADS", "8"))
+            n_gpu_layers = int(os.getenv("LLAMA_N_GPU_LAYERS", "40"))
+            n_batch = int(os.getenv("LLAMA_N_BATCH", "512"))
+            n_ctx = int(os.getenv("CHATBOT_CONTEXT_WINDOW", str(self.context_window)))
+
+            os.environ.setdefault("GGML_CUDA_FORCE_CUBLAS", "1")
+            os.environ.setdefault("GGML_CUDA_FORCE_MMQ", "1")
+
+            logger.info(
+                "Cargando Meta-Llama (llama_cpp): model=%s n_threads=%s n_gpu_layers=%s n_batch=%s n_ctx=%s",
+                self.model_name, n_threads, n_gpu_layers, n_batch, n_ctx,
+            )
+            self.model = Llama(
+                model_path=self.model_name,
+                n_ctx=n_ctx,
+                n_threads=n_threads,
+                n_gpu_layers=n_gpu_layers,
+                n_batch=n_batch,
+                verbose=True,
+            )
+            self._mark_loaded("cuda" if n_gpu_layers > 0 else "cpu", "llama_cpp")
+            logger.info("✅ Meta-Llama cargado via llama_cpp (%s)", self._device)
+        except Exception as exc:  # pragma: no cover - best effort GPU init
+            logger.warning("⚠️ Fallo cargando Meta-Llama via llama_cpp: %s", exc)
+
+    def _load_gpt4all(self) -> None:
+        """Carga GPT4All en CPU. Propaga la excepción si falla."""
+        from gpt4all import GPT4All  # import diferido: solo se necesita si llama.cpp no cargó
+
+        logger.info("Cargando GPT4All (cpu): %s", self.model_name)
+        self.model = GPT4All(self.model_name, device="cpu")
+        self._mark_loaded("cpu", getattr(self.model, "backend", "gpt4all"))
 
     def initialize_model(self) -> None:
+        """Carga el modelo una sola vez (thread-safe): llama.cpp si procede, GPT4All como respaldo."""
         if self.model is not None:
             return
 
@@ -437,136 +398,185 @@ class ChatbotService:
                 return
             self._initializing = True
             try:
-                logger.info("Cargando modelo (backend automático)...")
-                logger.info("Cargando modelo (intentando backend preferente)...")
                 env_backend = os.getenv("CHATBOT_BACKEND")
                 if env_backend:
                     self.backend_type = env_backend.lower()
+                elif "meta-llama" in os.path.basename(self.model_name).lower():
+                    self.backend_type = "meta-llama"
                 else:
-                    try:
-                        if isinstance(self.model_name, str) and "meta-llama" in os.path.basename(self.model_name).lower():
-                            self.backend_type = "meta-llama"
-                        else:
-                            self.backend_type = "gpt4all"
-                    except Exception:
-                        self.backend_type = "gpt4all"
+                    self.backend_type = "gpt4all"
 
-                preferred_device = os.getenv("GPT4ALL_DEVICE")
-                tried_devices = []
-                if preferred_device:
-                    candidate_devices = [preferred_device]
-                else:
-                    candidate_devices = ["cuda", "cuda:0", "gpu", "cuda:1", "cpu"]
-
-                last_exc = None
                 if self.backend_type == "meta-llama":
-                    try:
-                        from llama_cpp import Llama  # type: ignore
-
-                        n_threads = int(os.getenv("LLAMA_N_THREADS", "8"))
-                        n_gpu_layers = int(os.getenv("LLAMA_N_GPU_LAYERS", "40"))
-                        n_batch = int(os.getenv("LLAMA_N_BATCH", "512"))
-                        n_ctx = int(os.getenv("CHATBOT_CONTEXT_WINDOW", str(self.context_window)))
-
-                        os.environ.setdefault("GGML_CUDA_FORCE_CUBLAS", "1")
-                        os.environ.setdefault("GGML_CUDA_FORCE_MMQ", "1")
-
-                        logger.info("Intentando cargar Meta-Llama (llama_cpp): model=%s", self.model_name)
-                        logger.info(
-                            "→ n_threads=%s, n_gpu_layers=%s, n_batch=%s, n_ctx=%s",
-                            n_threads,
-                            n_gpu_layers,
-                            n_batch,
-                            n_ctx,
-                        )
-
-                        self.model = Llama(
-                            model_path=self.model_name,
-                            n_ctx=n_ctx,
-                            n_threads=n_threads,
-                            n_gpu_layers=n_gpu_layers,
-                            n_batch=n_batch,
-                            verbose=True,
-                        )
-
-                        self._device = "cuda" if n_gpu_layers > 0 else "cpu"
-                        self._backend = "llama_cpp"
-                        self._loaded_at = datetime.utcnow()
-                        self.model_failed = False
-                        self._failed_at = None
-                        logger.info(
-                            "✅ Meta-Llama cargado exitosamente via llama_cpp (GPU activa)"
-                            if n_gpu_layers > 0
-                            else "✅ Meta-Llama cargado (CPU)"
-                        )
-                        last_exc = None
-                    except Exception as e_meta:  # pragma: no cover - best effort GPU init
-                        last_exc = e_meta
-                        logger.warning("⚠️ Fallo cargando Meta-Llama via llama_cpp: %s", e_meta)
-
+                    self._load_llama_cpp()
                 if self.model is None:
-                    candidate_devices = ["cpu"]
-                    for device in candidate_devices:
-                        tried_devices.append(device)
-                        logger.info(
-                            "Intentando inicializar GPT4All en %s con modelo: %s",
-                            device,
-                            self.model_name,
-                        )
-                        try:
-                            self.model = GPT4All(self.model_name, device=device)
-                            self._device = device
-                            self._backend = getattr(self.model, "backend", "gpt4all")
-                            self._loaded_at = datetime.utcnow()
-                            self.model_failed = False
-                            self._failed_at = None
-                            logger.info("Modelo GPT4All cargado en %s", device)
-                            last_exc = None
-                            break
-                        except Exception as e_device:
-                            last_exc = e_device
-                            logger.warning("Fallo cargando GPT4All en %s: %s", device, e_device)
-
-                if last_exc is not None and self.model is None:
-                    logger.error(
-                        "No se pudo inicializar el modelo en dispositivos intentados: %s",
-                        tried_devices,
-                    )
-                    raise last_exc
-            except Exception as e:  # pragma: no cover - defensive fallback
+                    self._load_gpt4all()
+            except Exception as exc:  # pragma: no cover - defensive fallback
                 self.model_failed = True
-                try:
-                    self._failed_at = datetime.utcnow()
-                except Exception:
-                    self._failed_at = None
-                logger.error("Error cargando modelo: %s", e)
+                self._failed_at = datetime.utcnow()
+                logger.exception("Error cargando modelo: %s", exc)
                 logger.info(
                     "TIP: Descarga el modelo con: python -c 'from gpt4all import GPT4All; GPT4All(\"orca-mini-3b-gguf2-q4_0.gguf\")'"
                 )
-                traceback.print_exc()
             finally:
                 self._initializing = False
 
+    def generate(
+        self,
+        prompt: str,
+        *,
+        max_tokens: int,
+        temperature: float,
+        top_p: float = 0.85,
+        top_k: int = 40,
+    ) -> str:
+        """Genera texto con el backend cargado (llama.cpp o GPT4All). Requiere el modelo inicializado."""
+        if self._backend == "llama_cpp":
+            out = self.model(prompt=prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p)
+            try:
+                return out["choices"][0]["text"]
+            except (KeyError, IndexError, TypeError):
+                return str(out)
+        return str(
+            self.model.generate(prompt, max_tokens=max_tokens, temp=temperature, top_p=top_p, top_k=top_k)
+        )
+
+    @staticmethod
+    def _clean_response(response: str, wants_menu: bool) -> str:
+        """Quita restos del prompt y repeticiones, y ajusta formato y longitud de la respuesta."""
+        response = str(response)
+        # LIMPIEZA AGRESIVA: Eliminar TODAS las instrucciones del sistema que se filtren
+        # Patrón 1: Eliminar instrucciones explícitas del prompt
+        response = re.sub(r"(?i)(asistente virtual|respuesta:|cliente:|instrucciones?:|información del negocio:).*", "", response)
+
+        # Patrón 2: Eliminar frases que contengan "Eres una persona que trabaja"
+        response = re.sub(r"(?i)eres una persona que trabaja.*?(\.|$)", "", response, flags=re.DOTALL)
+
+        # Patrón 3: Eliminar instrucciones sobre cómo responder
+        response = re.sub(r"(?i)(responde? solo|no hagas preguntas|no repitas|termina tu respuesta|nunca respondas|no menciones).*?(\.|$)", "", response, flags=re.DOTALL)
+
+        # Patrón 4: Eliminar frases que empiezan con "NO" (instrucciones negativas)
+        response = re.sub(r"(?i)\.\s*NO [A-Z].*?(\.|$)", ".", response)
+
+        # Eliminar preguntas de entrenamiento que el modelo añade al final
+        response = re.sub(r"¿Qué harías si.*?$", "", response, flags=re.IGNORECASE | re.DOTALL)
+        response = re.sub(r"¿Qué tipo de.*?\?", "", response, flags=re.IGNORECASE)
+        response = re.sub(r"¿Cuál es.*?\?(?=\s*$)", "", response, flags=re.IGNORECASE)
+        response = re.sub(r"¿Dónde se.*?\?(?=\s*$)", "", response, flags=re.IGNORECASE)
+
+        # Detectar y eliminar patrones repetitivos (como "¡Hasta luego! 👋" repetido)
+        # Buscar frases que se repiten 3+ veces consecutivas
+        def remove_repetitions(text):
+            # Buscar patrones de 3-50 caracteres que se repiten 3+ veces
+            pattern = r'(.{3,50}?)(\1{2,})'
+            cleaned = re.sub(pattern, r'\1', text)
+            return cleaned
+
+        response = remove_repetitions(response)
+
+        # Eliminar frases de despedida repetitivas al final
+        response = re.sub(r'(¡Hasta luego!.*?){2,}$', '¡Hasta luego!', response, flags=re.IGNORECASE)
+        response = re.sub(r'(¡Gracias!.*?){2,}$', '¡Gracias!', response, flags=re.IGNORECASE)
+        response = re.sub(r'(¡Espero.*?){2,}$', '', response, flags=re.IGNORECASE)
+
+        # Eliminar múltiples preguntas al final (patrón común)
+        lines = response.split('\n')
+        clean_lines = []
+        question_count = 0
+        for line in lines:
+            # Si encontramos 2+ preguntas seguidas al final, las cortamos
+            if line.strip().startswith('¿') and line.strip().endswith('?'):
+                question_count += 1
+                if question_count >= 2:
+                    break
+            else:
+                question_count = 0
+                clean_lines.append(line)
+        response = '\n'.join(clean_lines).strip()
+
+        if wants_menu:
+            response = response.replace("\r\n", "\n").replace("\r", "\n")
+            response = re.sub(r"[ \t]+\n", "\n", response)
+            response = re.sub(r"\n{3,}", "\n\n", response)
+            response = re.sub(r"\s*•", "\n•", response)
+            if not response.startswith("•"):
+                response = "• " + response.lstrip()
+            response = response.strip()
+        else:
+            response = re.sub(r"\s+", " ", response).strip()
+
+        # LIMPIEZA FINAL: Eliminar cualquier resto de instrucciones que haya quedado
+        # Buscar y eliminar frases sospechosas que contengan palabras clave de instrucciones
+        suspicious_keywords = [
+            "eres una persona", "trabaja en este negocio", "tono amable", 
+            "responde solo", "no hagas preguntas", "no repitas", "no menciones",
+            "asistente virtual", "instrucciones", "formato de respuesta"
+        ]
+        for keyword in suspicious_keywords:
+            # Eliminar cualquier oración que contenga estas palabras
+            pattern = r"[^.!?]*" + re.escape(keyword) + r"[^.!?]*[.!?]?"
+            response = re.sub(pattern, "", response, flags=re.IGNORECASE)
+
+        # Limpiar espacios duplicados después de todas las eliminaciones
+        response = re.sub(r"\s+", " ", response).strip()
+
+        # Limitar número de frases solo si la respuesta es muy larga
+        if not wants_menu:
+            sentences = re.split(r"(?<=[.!?])\s", response)
+            sentence_limit = 4  # Aumentado de 2 a 4 frases
+            if len(sentences) > sentence_limit:
+                response = " ".join(sentences[:sentence_limit]).strip()
+
+        if re.search(r"\b(de|que|para|con|en|a|por|sobre)$", response):
+            response = response.rstrip(". ") + "."
+
+        max_length = 2000 if wants_menu else 500  # Aumentado de 300 a 500 caracteres
+        if len(response) > max_length:
+            if wants_menu:
+                cutoff = response[:max_length]
+
+                # Intentar cortar después de un plato completo (buscar punto + salto de línea)
+                last_item = cutoff.rfind(".\n•")
+                if last_item > max_length * 0.5:
+                    cutoff = cutoff[:last_item + 1]  # Incluir el punto
+                else:
+                    # Si no hay items con viñetas, buscar salto de línea
+                    last_break = cutoff.rfind("\n")
+                    if last_break > max_length * 0.6:
+                        cutoff = cutoff[:last_break]
+                    else:
+                        # Último recurso: buscar último punto
+                        last_period = cutoff.rfind(". ")
+                        if last_period > max_length * 0.5:
+                            cutoff = cutoff[:last_period + 1]
+                        else:
+                            cutoff = cutoff.rsplit(" ", 1)[0]
+
+                response = cutoff.rstrip()
+                if not response.endswith('.'):
+                    response += "…"
+            else:
+                response = response[:max_length].rsplit(" ", 1)[0] + "..."
+
+        if not response:
+            response = "Lo siento, no tengo esa información exacta. Puedes contactar con el negocio directamente."
+
+        return response.strip()
+
     def status(self) -> dict:
-        st = {
+        return {
             "model_loaded": self.model is not None,
             "model_failed": self.model_failed,
-            "model_name": getattr(self, "model_name", None),
+            "model_name": self.model_name,
             "device": self._device,
             "backend": self._backend,
-            "loaded_at": self._loaded_at.isoformat() if self._loaded_at is not None else None,
-            "failed_at": getattr(self, "_failed_at", None).isoformat() if getattr(self, "_failed_at", None) else None,
+            "loaded_at": self._loaded_at.isoformat() if self._loaded_at else None,
+            "failed_at": self._failed_at.isoformat() if self._failed_at else None,
+            "max_faqs": self.max_faqs,
+            "faq_answer_max_chars": self.faq_answer_max_chars,
+            "context_window": self.context_window,
+            "context_token_ratio": self.context_token_ratio,
+            "reserve_response_tokens": self.reserve_response_tokens,
         }
-        st.update(
-            {
-                "max_faqs": getattr(self, "max_faqs", None),
-                "faq_answer_max_chars": getattr(self, "faq_answer_max_chars", None),
-                "context_window": getattr(self, "context_window", None),
-                "context_token_ratio": getattr(self, "context_token_ratio", None),
-                "reserve_response_tokens": getattr(self, "reserve_response_tokens", None),
-            }
-        )
-        return st
 
     def build_context(
         self,
@@ -712,6 +722,7 @@ El cliente quiere conocer el menú del negocio. Responde siguiendo estas pautas:
         db=None,
         business=None,
         wants_all_rules: bool = False,
+        wants_menu: Optional[bool] = None,
         num_faqs_in_context: int = 4,
     ) -> str:
         if self.model_failed:
@@ -787,14 +798,14 @@ El cliente quiere conocer el menú del negocio. Responde siguiendo estas pautas:
                 return "¡Hola! 🏨 Bienvenido, ¿quieres consultar la disponibilidad o conocer nuestras habitaciones?"
             return "¡Hola! 😊 Qué gusto verte por aquí. ¿En qué puedo ayudarte hoy?"
 
-        wants_menu = self.is_menu_request(message)
+        if wants_menu is None:
+            critical = self.is_critical_info_request(message)
+            wants_menu = critical is not None and critical["type"] == "menú"
 
         # Si es consulta de menú, extraer información estructurada del documento
         menu_extracted = None
         if wants_menu and db:
             menu_extracted = self.extract_menu_from_documents(db, business.id)
-            if menu_extracted:
-                logger.info("→ Menú extraído estructuradamente de documentos")
 
         extra_instructions = []
         
@@ -946,161 +957,24 @@ El cliente quiere conocer el menú del negocio. Responde siguiendo estas pautas:
             # Límites razonables: mínimo 1200, máximo 3500
             max_tokens_out = max(1200, min(max_tokens_out, 3500))
             
-            logger.info(f"→ Cálculo inteligente de tokens:")
-            logger.info(f"   • FAQs a incluir: {num_faqs}")
-            logger.info(f"   • Estimación base: {num_faqs} × {estimated_tokens_per_rule} = {estimated_total} tokens")
-            logger.info(f"   • Con intro y margen 100%: {max_tokens_out} tokens")
+            logger.info("→ max_tokens=%s para %s FAQs", max_tokens_out, num_faqs)
         elif wants_menu:
             max_tokens_out = 400  # Tokens para menú
         else:
             max_tokens_out = 300  # Tokens para respuestas normales
 
-        def _generate():
-            if getattr(self, "_backend", None) == "llama_cpp":
-                out = self.model(
-                    prompt=prompt,
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(
+                    self.generate,
+                    prompt,
                     max_tokens=max_tokens_out,
                     temperature=temp_value,
                     top_p=top_p_value,
                 )
-                try:
-                    return out["choices"][0]["text"]
-                except Exception:
-                    return str(out)
-            return self.model.generate(
-                prompt,
-                max_tokens=max_tokens_out,
-                temp=temp_value,
-                top_p=top_p_value,
-                top_k=40,
-            )
-
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                fut = ex.submit(_generate)
                 response = fut.result(timeout=self.generate_timeout)
 
-            if isinstance(response, dict):
-                response = response.get("text", str(response))
-            response = str(response)
-
-            # LIMPIEZA AGRESIVA: Eliminar TODAS las instrucciones del sistema que se filtren
-            # Patrón 1: Eliminar instrucciones explícitas del prompt
-            response = re.sub(r"(?i)(asistente virtual|respuesta:|cliente:|instrucciones?:|información del negocio:).*", "", response)
-            
-            # Patrón 2: Eliminar frases que contengan "Eres una persona que trabaja"
-            response = re.sub(r"(?i)eres una persona que trabaja.*?(\.|$)", "", response, flags=re.DOTALL)
-            
-            # Patrón 3: Eliminar instrucciones sobre cómo responder
-            response = re.sub(r"(?i)(responde? solo|no hagas preguntas|no repitas|termina tu respuesta|nunca respondas|no menciones).*?(\.|$)", "", response, flags=re.DOTALL)
-            
-            # Patrón 4: Eliminar frases que empiezan con "NO" (instrucciones negativas)
-            response = re.sub(r"(?i)\.\s*NO [A-Z].*?(\.|$)", ".", response)
-            
-            # Eliminar preguntas de entrenamiento que el modelo añade al final
-            response = re.sub(r"¿Qué harías si.*?$", "", response, flags=re.IGNORECASE | re.DOTALL)
-            response = re.sub(r"¿Qué tipo de.*?\?", "", response, flags=re.IGNORECASE)
-            response = re.sub(r"¿Cuál es.*?\?(?=\s*$)", "", response, flags=re.IGNORECASE)
-            response = re.sub(r"¿Dónde se.*?\?(?=\s*$)", "", response, flags=re.IGNORECASE)
-            
-            # Detectar y eliminar patrones repetitivos (como "¡Hasta luego! 👋" repetido)
-            # Buscar frases que se repiten 3+ veces consecutivas
-            def remove_repetitions(text):
-                # Buscar patrones de 3-50 caracteres que se repiten 3+ veces
-                pattern = r'(.{3,50}?)(\1{2,})'
-                cleaned = re.sub(pattern, r'\1', text)
-                return cleaned
-            
-            response = remove_repetitions(response)
-            
-            # Eliminar frases de despedida repetitivas al final
-            response = re.sub(r'(¡Hasta luego!.*?){2,}$', '¡Hasta luego!', response, flags=re.IGNORECASE)
-            response = re.sub(r'(¡Gracias!.*?){2,}$', '¡Gracias!', response, flags=re.IGNORECASE)
-            response = re.sub(r'(¡Espero.*?){2,}$', '', response, flags=re.IGNORECASE)
-            
-            # Eliminar múltiples preguntas al final (patrón común)
-            lines = response.split('\n')
-            clean_lines = []
-            question_count = 0
-            for line in lines:
-                # Si encontramos 2+ preguntas seguidas al final, las cortamos
-                if line.strip().startswith('¿') and line.strip().endswith('?'):
-                    question_count += 1
-                    if question_count >= 2:
-                        break
-                else:
-                    question_count = 0
-                    clean_lines.append(line)
-            response = '\n'.join(clean_lines).strip()
-
-            if wants_menu:
-                response = response.replace("\r\n", "\n").replace("\r", "\n")
-                response = re.sub(r"[ \t]+\n", "\n", response)
-                response = re.sub(r"\n{3,}", "\n\n", response)
-                response = re.sub(r"\s*•", "\n•", response)
-                if not response.startswith("•"):
-                    response = "• " + response.lstrip()
-                response = response.strip()
-            else:
-                response = re.sub(r"\s+", " ", response).strip()
-            
-            # LIMPIEZA FINAL: Eliminar cualquier resto de instrucciones que haya quedado
-            # Buscar y eliminar frases sospechosas que contengan palabras clave de instrucciones
-            suspicious_keywords = [
-                "eres una persona", "trabaja en este negocio", "tono amable", 
-                "responde solo", "no hagas preguntas", "no repitas", "no menciones",
-                "asistente virtual", "instrucciones", "formato de respuesta"
-            ]
-            for keyword in suspicious_keywords:
-                # Eliminar cualquier oración que contenga estas palabras
-                pattern = r"[^.!?]*" + re.escape(keyword) + r"[^.!?]*[.!?]?"
-                response = re.sub(pattern, "", response, flags=re.IGNORECASE)
-            
-            # Limpiar espacios duplicados después de todas las eliminaciones
-            response = re.sub(r"\s+", " ", response).strip()
-
-            # Limitar número de frases solo si la respuesta es muy larga
-            if not wants_menu:
-                sentences = re.split(r"(?<=[.!?])\s", response)
-                sentence_limit = 4  # Aumentado de 2 a 4 frases
-                if len(sentences) > sentence_limit:
-                    response = " ".join(sentences[:sentence_limit]).strip()
-
-            if re.search(r"\b(de|que|para|con|en|a|por|sobre)$", response):
-                response = response.rstrip(". ") + "."
-
-            max_length = 2000 if wants_menu else 500  # Aumentado de 300 a 500 caracteres
-            if len(response) > max_length:
-                if wants_menu:
-                    cutoff = response[:max_length]
-                    
-                    # Intentar cortar después de un plato completo (buscar punto + salto de línea)
-                    last_item = cutoff.rfind(".\n•")
-                    if last_item > max_length * 0.5:
-                        cutoff = cutoff[:last_item + 1]  # Incluir el punto
-                    else:
-                        # Si no hay items con viñetas, buscar salto de línea
-                        last_break = cutoff.rfind("\n")
-                        if last_break > max_length * 0.6:
-                            cutoff = cutoff[:last_break]
-                        else:
-                            # Último recurso: buscar último punto
-                            last_period = cutoff.rfind(". ")
-                            if last_period > max_length * 0.5:
-                                cutoff = cutoff[:last_period + 1]
-                            else:
-                                cutoff = cutoff.rsplit(" ", 1)[0]
-                    
-                    response = cutoff.rstrip()
-                    if not response.endswith('.'):
-                        response += "…"
-                else:
-                    response = response[:max_length].rsplit(" ", 1)[0] + "..."
-
-            if not response:
-                response = "Lo siento, no tengo esa información exacta. Puedes contactar con el negocio directamente."
-
-            return response.strip()
+            return self._clean_response(response, wants_menu)
 
         except Exception as e:  # pragma: no cover - best effort logging
             logger.exception("Error en get_response: %s", e, exc_info=True)

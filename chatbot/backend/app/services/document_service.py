@@ -169,115 +169,6 @@ class DocumentService:
         _flush()
         return chunks or [text]
 
-
-    def _detect_menu_content(self, text: str) -> Optional[str]:
-        """
-        Detecta si el documento contiene un menú de restaurante y lo extrae.
-        
-        Args:
-            text: Texto del documento
-            
-        Returns:
-            El menú extraído o None
-        """
-        # Patrones que indican presencia de menú
-        menu_indicators = [
-            r'men[uú]\s*(principal|del\s+d[ií]a|degustaci[óo]n|de\s+la\s+casa)',
-            r'(carta|lista)\s+de\s+(platos|comidas|bebidas)',
-            r'(entrantes|primeros\s+platos?|segundos\s+platos?|postres|bebidas)',
-            r'especialidades(\s+de\s+la\s+casa)?',
-            r'(paella|arroz|tapas|raciones)\s*(valenciana|marinera|de|con)?',
-            r'\$\s*\d+|\d+\s*€|\d+\s*USD|€\s*\d+',  # Precios en varios formatos
-            r'(precio|pvp|coste).*\d+',
-        ]
-        
-        has_menu = any(re.search(pattern, text, re.IGNORECASE) for pattern in menu_indicators)
-        
-        if not has_menu:
-            logger.debug("No se detectaron indicadores de menú en el documento")
-            return None
-        
-        logger.info("✓ Indicadores de menú detectados, extrayendo contenido...")
-        
-        # Palabras clave de secciones de menú
-        menu_section_keywords = [
-            'menú', 'carta', 'entrantes', 'primeros', 'segundos', 'postres', 
-            'bebidas', 'especialidades', 'paella', 'arroces', 'tapas', 
-            'raciones', 'platos', 'dessert', 'aperitivos', 'mariscos',
-            'pescados', 'carnes', 'ensaladas', 'sopas', 'cremas'
-        ]
-        
-        # Extraer secciones que parecen menú
-        menu_sections = []
-        lines = text.split('\n')
-        in_menu_section = False
-        current_section = []
-        section_name = ""
-        
-        for i, line in enumerate(lines):
-            line_stripped = line.strip()
-            if not line_stripped:
-                if in_menu_section:
-                    current_section.append(line)
-                continue
-            
-            line_lower = line_stripped.lower()
-            
-            # Detectar título de sección de menú (línea corta con palabras clave)
-            is_section_header = (
-                len(line_stripped) < 60 and
-                any(keyword in line_lower for keyword in menu_section_keywords)
-            )
-            
-            # Detectar items con precio
-            has_price = bool(re.search(r'\$\s*\d+|\d+\s*€|\d+\s*USD|€\s*\d+|\.{2,}\s*\d+', line))
-            
-            # Detectar items tipo "• Plato - descripción"
-            is_bullet_item = bool(re.match(r'^[•\-\*·]\s*.+', line_stripped))
-            
-            if is_section_header:
-                # Guardar sección anterior
-                if current_section:
-                    menu_sections.append('\n'.join(current_section))
-                    logger.debug(f"  Sección capturada: {section_name} ({len(current_section)} líneas)")
-                
-                # Iniciar nueva sección
-                section_name = line_stripped
-                current_section = [line]
-                in_menu_section = True
-                
-            elif in_menu_section:
-                # Continuar capturando contenido de menú
-                is_menu_content = (
-                    has_price or 
-                    is_bullet_item or
-                    len(line_stripped) < 120 or  # Líneas cortas típicas de menú
-                    any(word in line_lower for word in ['con', 'de', 'y', 'acompañado', 'incluye', 'servido'])
-                )
-                
-                if is_menu_content:
-                    current_section.append(line)
-                elif len(line_stripped) > 150:
-                    # Línea muy larga, probablemente salió del menú
-                    if current_section:
-                        menu_sections.append('\n'.join(current_section))
-                        logger.debug(f"  Sección capturada: {section_name} ({len(current_section)} líneas)")
-                    current_section = []
-                    in_menu_section = False
-        
-        # Agregar última sección
-        if current_section:
-            menu_sections.append('\n'.join(current_section))
-            logger.debug(f"  Sección capturada: {section_name} ({len(current_section)} líneas)")
-        
-        if menu_sections:
-            full_menu = '\n\n'.join(menu_sections)
-            logger.info(f"✓ Menú extraído exitosamente: {len(menu_sections)} secciones, {len(full_menu)} caracteres")
-            return full_menu
-        
-        logger.warning("⚠️ Se detectaron indicadores de menú pero no se pudo extraer contenido")
-        return None
-
     def _detect_critical_sections(self, text: str, business: Optional[Business] = None) -> List[Dict[str, str]]:
         """
         Detección inteligente y automática de secciones críticas en cualquier documento.
@@ -341,21 +232,9 @@ Respuesta:"""
 
             logger.info("🤖 Analizando documento con IA para detectar secciones críticas...")
             
-            if chatbot_service._backend == "llama_cpp":
-                response = chatbot_service.model(
-                    prompt=detection_prompt,
-                    max_tokens=50,
-                    temperature=0.2,
-                    top_p=0.85,
-                )
-                detection_result = response["choices"][0]["text"].strip()
-            else:
-                detection_result = chatbot_service.model.generate(
-                    detection_prompt,
-                    max_tokens=50,
-                    temp=0.2,
-                    top_p=0.85,
-                ).strip()
+            detection_result = chatbot_service.generate(
+                detection_prompt, max_tokens=50, temperature=0.2, top_p=0.85
+            ).strip()
             
             logger.info(f"🔍 Resultado detección: {detection_result}")
             
@@ -387,21 +266,9 @@ CONTENIDO DE {section_type.upper()}:"""
 
                 logger.info(f"📄 Extrayendo contenido completo de {section_type}...")
                 
-                if chatbot_service._backend == "llama_cpp":
-                    response = chatbot_service.model(
-                        prompt=extraction_prompt,
-                        max_tokens=2000,
-                        temperature=0.1,  # Muy baja para evitar invenciones
-                        top_p=0.85,
-                    )
-                    extracted_content = response["choices"][0]["text"].strip()
-                else:
-                    extracted_content = chatbot_service.model.generate(
-                        extraction_prompt,
-                        max_tokens=2000,
-                        temp=0.1,
-                        top_p=0.85,
-                    ).strip()
+                extracted_content = chatbot_service.generate(
+                    extraction_prompt, max_tokens=2000, temperature=0.1, top_p=0.85
+                ).strip()
                 
                 if extracted_content and len(extracted_content) > 50:
                     # Generar pregunta apropiada según el tipo
@@ -575,7 +442,6 @@ CONTENIDO DE {section_type.upper()}:"""
             
             # Análisis del contenido para estimar FAQs necesarias
             doc_length = len(text_sample)
-            num_lines = text_sample.count('\n')
             num_sections = len(re.findall(r'\n\n+', text_sample))  # Secciones separadas por líneas vacías
             num_sentences = len(re.findall(r'[.!?]+', text_sample))  # Aproximado
             
@@ -616,7 +482,7 @@ CONTENIDO DE {section_type.upper()}:"""
             logger.info(f"📝 Oraciones aproximadas: {num_sentences}")
             logger.info(f"🎯 FAQs estimadas necesarias: {estimated_faqs}")
             logger.info(f"🔢 Tokens calculados dinámicamente: {calculated_tokens}")
-            logger.info(f"💡 Esto garantiza ~100% de cobertura del contenido")
+            logger.info("💡 Esto garantiza ~100% de cobertura del contenido")
             logger.info("=" * 80)
             
             business_context = ""
@@ -667,26 +533,9 @@ Genera {faqs_pass1} FAQs siguiendo este formato EXACTO:"""
             logger.info(f"Generando {faqs_pass1} FAQs (Pasada 1) con {calculated_tokens} tokens usando %s...", chatbot_service._backend)
             
             # Generar usando el mismo backend que el chatbot (TOKENS DINÁMICOS)
-            if chatbot_service._backend == "llama_cpp":
-                # Usar llama_cpp directamente - TOKENS CALCULADOS DINÁMICAMENTE
-                response = chatbot_service.model(
-                    prompt=prompt_general,
-                    max_tokens=calculated_tokens,  # 🧠 DINÁMICO basado en análisis del documento
-                    temperature=0.3,
-                    top_p=0.9,
-                )
-                try:
-                    response_text = response["choices"][0]["text"]
-                except Exception:
-                    response_text = str(response)
-            else:
-                # Usar GPT4All con tokens dinámicos también
-                response_text = chatbot_service.model.generate(
-                    prompt_general,
-                    max_tokens=calculated_tokens,  # 🧠 DINÁMICO
-                    temp=0.3,
-                    top_p=0.9,
-                )
+            response_text = chatbot_service.generate(
+                prompt_general, max_tokens=calculated_tokens, temperature=0.3, top_p=0.9
+            )
             
             # DEBUG: Mostrar la respuesta del modelo
             logger.info("=" * 80)
@@ -790,24 +639,9 @@ Genera {faqs_pass2} FAQs AHORA:"""
                 logger.info(f"   Tokens asignados para Pasada 2: {tokens_pass2}")
                 
                 try:
-                    if chatbot_service._backend == "llama_cpp":
-                        response2 = chatbot_service.model(
-                            prompt=prompt_detailed,
-                            max_tokens=tokens_pass2,  # 🧠 DINÁMICO basado en necesidad
-                            temperature=0.3,
-                            top_p=0.9,
-                        )
-                        try:
-                            response_text2 = response2["choices"][0]["text"]
-                        except Exception:
-                            response_text2 = str(response2)
-                    else:
-                        response_text2 = chatbot_service.model.generate(
-                            prompt_detailed,
-                            max_tokens=tokens_pass2,  # 🧠 DINÁMICO para GPT4All también
-                            temp=0.3,
-                            top_p=0.9,
-                        )
+                    response_text2 = chatbot_service.generate(
+                        prompt_detailed, max_tokens=tokens_pass2, temperature=0.3, top_p=0.9
+                    )
                     
                     logger.info("\n📝 RESPUESTA PASADA 2:")
                     logger.info(response_text2[:500] + "..." if len(response_text2) > 500 else response_text2)

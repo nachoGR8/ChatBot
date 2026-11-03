@@ -4,8 +4,10 @@ from __future__ import annotations
 import asyncio
 import difflib
 import logging
-import threading
+import random
+import re
 from datetime import datetime
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -19,6 +21,98 @@ from ...services.document_service import document_service
 router = APIRouter(tags=["chat"])
 logger = logging.getLogger("chatbot")
 
+CRITICAL_FAQ_MIN_PRIORITY = 100  # FAQs con prioridad >= 100 se devuelven tal cual, sin LLM
+FUZZY_MATCH_THRESHOLD = 0.70  # similitud mínima pregunta/FAQ para responder sin LLM
+ALL_RULES_MAX_FAQS = 50
+
+ALL_RULES_PHRASES = (
+    "las normas", "todas las normas", "qué normas", "cuáles son las normas",
+    "las reglas", "todas las reglas", "qué reglas", "cuáles son las reglas",
+    "normativa", "reglamento", "dime las normas", "cuales normas",
+    "normas del gimnasio", "reglas del gimnasio",
+)
+RELEVANCE_KEYWORDS = (
+    "norma", "regla", "prohibido", "permitido", "horario", "precio",
+    "servicio", "clase", "reserva", "instalación", "equipamiento",
+    "acceso", "entrada", "tarjeta", "fumar", "alcohol", "comida",
+    "bebida", "gimnasio", "spa", "piscina", "ducha", "taquilla",
+)
+
+RECOMMENDATION_INSTRUCTION = (
+    "\nEl cliente está pidiendo una recomendación concreta. Usa la información del negocio y las FAQs para sugerir como máximo dos opciones específicas (platos, servicios o planes), explica brevemente por qué encajan con lo que pide y ofrece una alternativa opcional si aplica."
+)
+
+EXTRA_INSTRUCTIONS = """
+INSTRUCCIONES ADICIONALES:
+- Responde con calidez, cercanía y profesionalidad; puedes abrir con un saludo breve y algún emoji si encaja con la marca.
+- Entrega la información solicitada y, si aporta valor, añade un matiz extra o un ejemplo corto.
+- Usa frases naturales; si lo ves útil, incluye una lista corta (máximo 3 puntos) para elementos clave.
+- Añade como máximo una pregunta amable orientada a ofrecer más ayuda (por ejemplo, si desea más detalles); nunca pidas al usuario información que correspondería al negocio.
+- No repitas la pregunta del usuario ni añadas múltiples preguntas.
+- No incluyas roles como 'cliente' o 'asistente' en la respuesta.
+- Si no sabes la respuesta, sugiere amablemente contactar con el negocio.
+- Si el usuario da las gracias o se despide, responde de forma amable y personalizada.
+"""
+
+
+def _save_conversation(db: Session, message: ChatMessage, bot_response: str) -> None:
+    try:
+        db.add(
+            Conversation(
+                business_id=message.business_id,
+                session_id=message.session_id,
+                user_message=message.message,
+                bot_response=bot_response,
+            )
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("No se pudo guardar la conversación")
+
+
+async def _natural_delay() -> None:
+    """Pausa breve para simular 'pensamiento'. Es asíncrona: no bloquea el servidor."""
+    await asyncio.sleep(random.uniform(1.0, 1.5))
+
+
+def _critical_faq_answer(faqs: List[FAQ], critical: dict) -> Optional[str]:
+    """Respuesta directa desde la FAQ prioritaria que encaje con el tipo de consulta crítica."""
+    candidates = [
+        f
+        for f in faqs
+        if (f.priority or 0) >= CRITICAL_FAQ_MIN_PRIORITY
+        and any(
+            kw in f.question.lower() or kw in (f.category or "").lower()
+            for kw in critical["keywords"]
+        )
+    ]
+    if not candidates:
+        return None
+
+    best = max(candidates, key=lambda f: f.priority)
+    logger.info("✅ Consulta crítica '%s': FAQ %s directa, sin pasar por LLM", critical["type"], best.id)
+
+    # Quitar referencia a fuente antigua (evita duplicados)
+    text = re.sub(r"\n*\s*\[Fuente:.*?\]\s*$", "", best.answer, flags=re.IGNORECASE)
+    if not text.startswith("¡") and not text.startswith("Hola"):
+        text = f"¡Hola! {critical.get('emoji', '📋')} Con mucho gusto te muestro la información:\n\n{text}"
+    return text
+
+
+def _best_faq_match(faqs: List[FAQ], text: str) -> Optional[FAQ]:
+    """FAQ cuya pregunta se parece lo bastante al mensaje como para responder sin LLM."""
+    text = text.lower()
+    best, best_ratio = None, 0.0
+    for faq in faqs:
+        question = (faq.question or "").strip()
+        if not question:
+            continue
+        ratio = difflib.SequenceMatcher(None, text, question.lower()).ratio()
+        if ratio > best_ratio:
+            best, best_ratio = faq, ratio
+    return best if best_ratio >= FUZZY_MATCH_THRESHOLD else None
+
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(message: ChatMessage, db: Session = Depends(get_db)):
@@ -27,194 +121,65 @@ async def chat(message: ChatMessage, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Negocio no encontrado")
 
     faqs = db.query(FAQ).filter(FAQ.business_id == message.business_id).all()
-    logger.info(f"📊 ENDPOINT: Total FAQs cargados for business_id={message.business_id}: {len(faqs)}")
-    
-    # ============================================================================
-    # SISTEMA INTELIGENTE DE BYPASS DIRECTO (Universal para cualquier negocio)
-    # ============================================================================
-    # Detectar si el usuario está pidiendo información crítica (menú, clases, productos, servicios, etc.)
-    # y responder directamente desde FAQs de alta prioridad para evitar alucinaciones del LLM
-    # ============================================================================
-    
-    critical_request_detected = chatbot_service.is_critical_info_request(message.message)
-    
-    if critical_request_detected:
-        logger.info(f"🔍 Detectada consulta de información crítica: '{message.message}'")
-        logger.info(f"🔍 Tipo detectado: {critical_request_detected['type']}")
-        logger.info(f"🔍 Total FAQs disponibles: {len(faqs)}")
-        
-        # Buscar FAQs de alta prioridad que coincidan con el tipo detectado
-        critical_faqs = [
-            f for f in faqs 
-            if f.priority >= 100 and any(
-                keyword in f.question.lower() or keyword in (f.category or "").lower()
-                for keyword in critical_request_detected['keywords']
+
+    # 1) Información crítica (menú, clases, precios...): FAQ prioritaria directa, sin LLM
+    #    para evitar alucinaciones.
+    critical = chatbot_service.is_critical_info_request(message.message)
+    if critical:
+        answer = _critical_faq_answer(faqs, critical)
+        if answer:
+            _save_conversation(db, message, answer)
+            await _natural_delay()
+            return ChatResponse(response=answer, timestamp=datetime.utcnow())
+
+    # 2) Quedarse solo con las FAQs relevantes para no confundir al modelo
+    message_lower = message.message.lower()
+    wants_all_rules = any(phrase in message_lower for phrase in ALL_RULES_PHRASES)
+    keywords = [word for word in RELEVANCE_KEYWORDS if word in message_lower]
+    if keywords:
+        relevant_faqs = [
+            faq
+            for faq in faqs
+            if any(
+                kw in (faq.question + " " + faq.answer + " " + (faq.category or "")).lower()
+                for kw in keywords
             )
         ]
-        
-        logger.info(f"🔍 FAQs críticos filtrados (prioridad >= 100): {len(critical_faqs)}")
-        if critical_faqs:
-            for faq in critical_faqs[:3]:  # Mostrar primeros 3
-                logger.info(f"   - FAQ {faq.id} (prioridad {faq.priority}): {faq.question[:50]}...")
-        
-        if critical_faqs:
-            # Ordenar por prioridad y tomar el primero
-            critical_faqs.sort(key=lambda x: x.priority, reverse=True)
-            critical_faq = critical_faqs[0]
-            
-            logger.info(f"✅ Retornando FAQ {critical_faq.id} directamente SIN pasar por LLM")
-            
-            # Retornar directamente la respuesta del FAQ sin pasar por el LLM
-            # Esto garantiza 100% precisión sin invenciones
-            response_text = critical_faq.answer
-            
-            # Limpiar cualquier referencia a fuente antigua (para evitar duplicados)
-            import re
-            response_text = re.sub(r'\n*\s*\[Fuente:.*?\]\s*$', '', response_text, flags=re.IGNORECASE)
-            
-            # Añadir un toque natural al inicio según el tipo
-            intro_emoji = critical_request_detected.get('emoji', '📋')
-            if not response_text.startswith('¡') and not response_text.startswith('Hola'):
-                response_text = f"¡Hola! {intro_emoji} Con mucho gusto te muestro la información:\n\n{response_text}"
-            
-            # Guardar en historial
-            db.add(
-                Conversation(
-                    business_id=message.business_id,
-                    session_id=message.session_id,
-                    user_message=message.message,
-                    bot_response=response_text,
-                    timestamp=datetime.utcnow(),
-                )
-            )
-            db.commit()
-            
-            # Agregar delay natural (1-1.5 segundos)
-            import time
-            import random
-            time.sleep(random.uniform(1.0, 1.5))
-            
-            return ChatResponse(
-                response=response_text,
-                timestamp=datetime.utcnow(),
-            )
-    
-    # Si no es consulta crítica o no hay FAQ específico, continuar con flujo normal
-    is_critical_request = critical_request_detected is not None
-    if is_critical_request:
-        current_max = 50  # Más FAQs si es consulta crítica
-    else:
-        current_max = chatbot_service.max_faqs
-    
-    # ============================================================================
-    # FILTRADO INTELIGENTE DE FAQs RELEVANTES
-    # ============================================================================
-    # Filtrar FAQs por relevancia semántica antes de construir el contexto
-    # para evitar confusión con múltiples FAQs no relacionadas
-    # ============================================================================
-    
-    message_lower = message.message.lower()
-    
-    # Detectar si el cliente pide TODAS las normas/reglas (pregunta plural comprehensiva)
-    wants_all_rules = any(phrase in message_lower for phrase in [
-        'las normas', 'todas las normas', 'qué normas', 'cuáles son las normas',
-        'las reglas', 'todas las reglas', 'qué reglas', 'cuáles son las reglas',
-        'normativa', 'reglamento', 'dime las normas', 'cuales normas',
-        'normas del gimnasio', 'reglas del gimnasio'
-    ])
-    
-    if wants_all_rules:
-        logger.info(f"🔥 DETECTADO: Pregunta por TODAS LAS NORMAS - Mensaje: '{message.message}'")
-    
-    # Palabras clave para filtrar FAQs relevantes
-    keywords_in_message = []
-    
-    # Extraer palabras clave significativas (sustantivos y verbos importantes)
-    important_words = ['norma', 'regla', 'prohibido', 'permitido', 'horario', 'precio', 
-                       'servicio', 'clase', 'reserva', 'instalación', 'equipamiento',
-                       'acceso', 'entrada', 'tarjeta', 'fumar', 'alcohol', 'comida',
-                       'bebida', 'gimnasio', 'spa', 'piscina', 'ducha', 'taquilla']
-    
-    for word in important_words:
-        if word in message_lower:
-            keywords_in_message.append(word)
-    
-    # Si detectamos palabras clave, filtrar FAQs relevantes
-    if keywords_in_message:
-        logger.info(f"🔍 Palabras clave detectadas: {keywords_in_message}")
-        
-        if wants_all_rules:
-            logger.info(f"📋 Cliente pide TODAS las normas/reglas - incluyendo todas las FAQs relacionadas")
-        
-        # Filtrar FAQs que contengan al menos una palabra clave
-        relevant_faqs = []
-        for faq in faqs:
-            faq_text = (faq.question + " " + faq.answer + " " + (faq.category or "")).lower()
-            if any(keyword in faq_text for keyword in keywords_in_message):
-                relevant_faqs.append(faq)
-        
         if relevant_faqs:
-            logger.info(f"✅ FAQs relevantes encontradas: {len(relevant_faqs)} de {len(faqs)}")
-            faqs = relevant_faqs  # Usar solo las FAQs relevantes
-        else:
-            logger.info(f"⚠️ No se encontraron FAQs relevantes, usando todas: {len(faqs)}")
-    
-    # ============================================================================
+            faqs = relevant_faqs
 
-    if chatbot_service.model_failed:
-        if chatbot_service.model is not None:
-            chatbot_service.model_failed = False
-            try:
-                chatbot_service._failed_at = None
-            except Exception:
-                pass
-        else:
-            try:
-                phone = business.phone or "el negocio"
-            except Exception:
-                phone = "el negocio"
-            try:
-                if not getattr(chatbot_service, "_initializing", False):
-                    threading.Thread(target=chatbot_service.initialize_model, daemon=True).start()
-            except Exception:
-                pass
-            return ChatResponse(
-                response="El modelo se está preparando. Intenta de nuevo en unos segundos.",
-                timestamp=datetime.utcnow(),
-            )
+    # 3) Pregunta casi idéntica a una FAQ: responder sin LLM ni construir contexto
+    matched_faq = _best_faq_match(faqs, message.message)
+    if matched_faq:
+        answer = (matched_faq.answer or "").strip()
+        _save_conversation(db, message, answer)
+        return ChatResponse(response=answer, timestamp=datetime.utcnow())
 
-    if getattr(chatbot_service, "_initializing", False):
-        return ChatResponse(
-            response="El modelo se está inicializando. Por favor espera unos segundos y vuelve a intentarlo.",
-            timestamp=datetime.utcnow(),
-        )
+    # 4) Hace falta el modelo
+    notice = chatbot_service.ensure_ready()
+    if notice:
+        return ChatResponse(response=notice, timestamp=datetime.utcnow())
 
-    if chatbot_service.model is None:
-        try:
-            threading.Thread(target=chatbot_service.initialize_model, daemon=True).start()
-        except Exception:
-            pass
-        return ChatResponse(
-            response="El modelo se está preparando. Intenta de nuevo en unos segundos.",
-            timestamp=datetime.utcnow(),
-        )
-
-    # Ajustar max_faqs según el tipo de consulta
+    # 5) Construir contexto
     if wants_all_rules:
-        current_max = 50  # Muchas FAQs para listar todas las normas
-        logger.info(f"→ Aumentando max_faqs a {current_max} para incluir todas las normas")
-        num_faqs_for_context = len(faqs)  # Guardar el número real de FAQs para cálculo de tokens
+        max_faqs = ALL_RULES_MAX_FAQS
+        num_faqs_for_context = len(faqs)  # número real de FAQs, para el cálculo de tokens
     else:
-        current_max = chatbot_service.max_faqs
-        num_faqs_for_context = min(len(faqs), current_max)
-    
-    context = chatbot_service.build_context(
-        business,
-        faqs,
-        max_faqs=current_max,
-        include_default_instructions=not is_critical_request,
-        menu_focus=is_critical_request,
-    )
+        max_faqs = chatbot_service.max_faqs
+        num_faqs_for_context = min(len(faqs), max_faqs)
+
+    is_critical_request = critical is not None
+
+    def build(max_faqs_: int) -> str:
+        return chatbot_service.build_context(
+            business,
+            faqs,
+            max_faqs=max_faqs_,
+            include_default_instructions=not is_critical_request,
+            menu_focus=is_critical_request,
+        )
+
+    context = build(max_faqs)
 
     try:
         history_entries = (
@@ -239,10 +204,10 @@ async def chat(message: ChatMessage, db: Session = Depends(get_db)):
     name_already_used = False
     if customer_name:
         name_lower = customer_name.lower()
-        for entry in history_entries:
-            if entry.bot_response and name_lower in entry.bot_response.lower():
-                name_already_used = True
-                break
+        name_already_used = any(
+            entry.bot_response and name_lower in entry.bot_response.lower()
+            for entry in history_entries
+        )
         context += f"\nNombre del cliente: {customer_name}\n"
         if name_already_used:
             context += "Ya usaste el nombre del cliente anteriormente; evita repetirlo salvo que sea imprescindible.\n"
@@ -267,91 +232,32 @@ async def chat(message: ChatMessage, db: Session = Depends(get_db)):
         context += "\n\nINFORMACIÓN ADICIONAL (Documentos cargados):\n"
         for snippet in document_snippets:
             source_label = snippet.get("source") or "Documento"
-            snippet_text = snippet.get("text", "")
-            context += f"- {source_label}: {snippet_text}\n"
+            context += f"- {source_label}: {snippet.get('text', '')}\n"
 
     if chatbot_service.is_recommendation_request(message.message):
-        context += (
-            "\nEl cliente está pidiendo una recomendación concreta. Usa la información del negocio y las FAQs para sugerir como máximo dos opciones específicas (platos, servicios o planes), explica brevemente por qué encajan con lo que pide y ofrece una alternativa opcional si aplica."
-        )
+        context += RECOMMENDATION_INSTRUCTION
 
-    context += """
-INSTRUCCIONES ADICIONALES:
-- Responde con calidez, cercanía y profesionalidad; puedes abrir con un saludo breve y algún emoji si encaja con la marca.
-- Entrega la información solicitada y, si aporta valor, añade un matiz extra o un ejemplo corto.
-- Usa frases naturales; si lo ves útil, incluye una lista corta (máximo 3 puntos) para elementos clave.
-- Añade como máximo una pregunta amable orientada a ofrecer más ayuda (por ejemplo, si desea más detalles); nunca pidas al usuario información que correspondería al negocio.
-- No repitas la pregunta del usuario ni añadas múltiples preguntas.
-- No incluyas roles como 'cliente' o 'asistente' en la respuesta.
-- Si no sabes la respuesta, sugiere amablemente contactar con el negocio.
-- Si el usuario da las gracias o se despide, responde de forma amable y personalizada.
-"""
+    context += EXTRA_INSTRUCTIONS
 
-    try:
-        best = None
-        best_ratio = 0.0
-        for faq in faqs:
-            question = (faq.question or "").strip()
-            if not question:
-                continue
-            ratio = difflib.SequenceMatcher(None, message.message.lower(), question.lower()).ratio()
-            if ratio > best_ratio:
-                best_ratio = ratio
-                best = faq
-        if best and best_ratio >= 0.70:
-            bot_response = (best.answer or "").strip()
-            try:
-                conversation = Conversation(
-                    business_id=message.business_id,
-                    session_id=message.session_id,
-                    user_message=message.message,
-                    bot_response=bot_response,
-                )
-                db.add(conversation)
-                db.commit()
-            except Exception:
-                pass
-            return ChatResponse(response=bot_response, timestamp=datetime.utcnow())
-    except Exception:
-        pass
+    # 6) Ajustar el contexto a la ventana del modelo
+    ratio = chatbot_service.context_token_ratio
+    allowed = chatbot_service.context_window - chatbot_service.reserve_response_tokens
+    approx_tokens = max(1, len(context + message.message) // ratio)
+    while approx_tokens > allowed and max_faqs > 1:
+        max_faqs = max(1, max_faqs // 2)
+        context = build(max_faqs)
+        approx_tokens = max(1, len(context + message.message) // ratio)
 
-    try:
-        approx_tokens = max(1, len(context + message.message) // chatbot_service.context_token_ratio)
-        allowed = chatbot_service.context_window - chatbot_service.reserve_response_tokens
-        while approx_tokens > allowed and current_max > 1:
-            current_max = max(1, current_max // 2)
-            context = chatbot_service.build_context(
-                business,
-                faqs,
-                max_faqs=current_max,
-                include_default_instructions=not is_critical_request,
-                menu_focus=is_critical_request,
-            )
-            approx_tokens = max(1, len(context + message.message) // chatbot_service.context_token_ratio)
+    if approx_tokens > allowed:
+        max_chars = allowed * ratio
+        full = context + f"\n\n{message.message}\n"
+        tail = full[-(max_chars // 2):]
+        head = full[: max(0, max_chars - len(tail))]
+        context = head + tail
 
-        if approx_tokens > allowed:
-            max_chars = allowed * chatbot_service.context_token_ratio
-            full = context + f"\n\n{message.message}\n"
-            tail = full[-(max_chars // 2):]
-            head = full[: max(0, max_chars - len(tail))]
-            context = head + tail
-    except Exception:
-        pass
-
-    loop = asyncio.get_event_loop()
-    generation_kwargs = {
-        "temperature": getattr(business, "generation_temperature", None),
-        "top_p": getattr(business, "generation_top_p", None),
-        "welcome_message": getattr(business, "welcome_message", None) if not conversation_started else None,
-        "suppress_greeting": conversation_started,
-        "customer_name": customer_name,
-        "name_already_used": name_already_used,
-        "db": db,
-        "business": business,
-        "wants_all_rules": wants_all_rules,  # Indicar si pide todas las normas
-        "num_faqs_in_context": num_faqs_for_context,  # Número de FAQs para cálculo de tokens
-    }
-
+    # 7) Generar (en un hilo, para no bloquear el event loop)
+    phone = business.phone or "el negocio"
+    loop = asyncio.get_running_loop()
     try:
         bot_response = await asyncio.wait_for(
             loop.run_in_executor(
@@ -359,48 +265,35 @@ INSTRUCCIONES ADICIONALES:
                 lambda: chatbot_service.get_response(
                     message.message,
                     context,
-                    **generation_kwargs,
+                    temperature=business.generation_temperature,
+                    top_p=business.generation_top_p,
+                    welcome_message=None if conversation_started else business.welcome_message,
+                    suppress_greeting=conversation_started,
+                    customer_name=customer_name,
+                    name_already_used=name_already_used,
+                    db=db,
+                    business=business,
+                    wants_all_rules=wants_all_rules,
+                    wants_menu=is_critical_request and critical["type"] == "menú",
+                    num_faqs_in_context=num_faqs_for_context,
                 ),
             ),
             timeout=chatbot_service.generate_timeout + 5,
         )
     except asyncio.TimeoutError:
-        try:
-            phone = context.split('Teléfono: ')[1].splitlines()[0]
-        except Exception:
-            phone = "el negocio"
         bot_response = (
             "Lo siento, estoy tardando demasiado al generar la respuesta. Por favor inténtalo de nuevo o contacta con "
             f"{phone}."
         )
     except Exception:
-        try:
-            phone = context.split('Teléfono: ')[1].splitlines()[0]
-        except Exception:
-            phone = "el negocio"
+        logger.exception("Error generando la respuesta")
         bot_response = (
             "Lo siento, estamos teniendo problemas técnicos. Por favor contacta con "
             f"{phone}."
         )
 
-    try:
-        conversation = Conversation(
-            business_id=message.business_id,
-            session_id=message.session_id,
-            user_message=message.message,
-            bot_response=bot_response,
-        )
-        db.add(conversation)
-        db.commit()
-    except Exception:
-        pass
-
-    # Agregar delay natural para simular "pensamiento" del bot (1-1.5 segundos)
-    import time
-    import random
-    delay = random.uniform(1.0, 1.5)
-    time.sleep(delay)
-
+    _save_conversation(db, message, bot_response)
+    await _natural_delay()
     return ChatResponse(response=bot_response, timestamp=datetime.utcnow())
 
 

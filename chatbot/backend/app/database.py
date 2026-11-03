@@ -3,11 +3,9 @@ from __future__ import annotations
 
 import logging
 import os
-from contextlib import contextmanager
-from typing import Iterator
 
-from sqlalchemy import Column, create_engine, text
-from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 logger = logging.getLogger("chatbot")
 
@@ -48,17 +46,3 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     ensure_business_custom_columns(engine)
-
-
-@contextmanager
-def session_scope() -> Iterator[Session]:
-    """Provide a transactional scope around a series of operations."""
-    session: Session = SessionLocal()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
