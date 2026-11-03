@@ -174,19 +174,9 @@
     <a href="mailto:hola@chatbot.ai">hola@chatbot.ai</a>
   </footer>
 
-  <script>
-  window.CHATBOT_CONFIG = {
-    apiUrl: window.CHATBOT_API_URL || window.location.origin,
-    businessId: 1,
-    businessName: 'Chatbot AI',
-    primaryColor: '#6366f1',
-    secondaryColor: '#8b5cf6'
-  };
-</script>
 <script>
-  // Configuración del widget
-  window.CHATBOT_API_URL = 'http://localhost:8000';
-  window.CHATBOT_BUSINESS_ID = 2;
+  // El negocio se elige con ?business=ID; la API es el mismo servidor que sirve widget.js.
+  window.CHATBOT_BUSINESS_ID = new URLSearchParams(location.search).get('business') || 1;
   window.CHATBOT_POSITION = 'bottom-right';
   window.CHATBOT_PRIMARY_COLOR = '#6366f1';
 </script>
@@ -203,8 +193,6 @@
       window.chatbotWidget.toggleWidget();
     }
   }
-  
-  console.log('🚀 Chat widget cargado');
 </script>
 
 

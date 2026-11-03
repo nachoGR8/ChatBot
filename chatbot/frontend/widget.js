@@ -451,6 +451,24 @@
             this.injectStyles();
             this.createWidget();
             this.attachEventListeners();
+            this.loadBusinessInfo();
+        }
+
+        // Nombre y bienvenida del negocio desde el servidor, para no tener que repetirlos en cada web.
+        async loadBusinessInfo() {
+            try {
+                const response = await fetch(`${CONFIG.apiUrl}/businesses/${CONFIG.businessId}`);
+                if (!response.ok) return;
+                const business = await response.json();
+                if (business.name) {
+                    document.getElementById('chatbot-title').textContent = `💬 ${business.name}`;
+                }
+                if (business.welcome_message) {
+                    document.getElementById('chatbot-welcome').textContent = business.welcome_message;
+                }
+            } catch (e) {
+                // Sin conexión: se quedan los textos por defecto.
+            }
         }
 
         injectStyles() {
@@ -470,12 +488,12 @@
                 </button>
                 <div class="chatbot-window" id="chatbot-window">
                     <div class="chatbot-header">
-                        <div class="chatbot-header-title">💬 Chat</div>
+                        <div class="chatbot-header-title" id="chatbot-title">💬 Chat</div>
                         <button class="chatbot-close-button" id="chatbot-close">×</button>
                     </div>
                     <div class="chatbot-messages" id="chatbot-messages">
                         <div class="chatbot-message bot">
-                            <div class="chatbot-message-bubble">¡Hola! 👋 ¿En qué puedo ayudarte?</div>
+                            <div class="chatbot-message-bubble" id="chatbot-welcome">¡Hola! 👋 ¿En qué puedo ayudarte?</div>
                         </div>
                         <div class="chatbot-typing" id="chatbot-typing">
                             <div class="chatbot-typing-dot"></div>

@@ -52,14 +52,16 @@ En Windows, `./run_backend_fixed.ps1 -AdminKey 'cambia-esto'` hace lo mismo.
 ## Incrustar el widget
 
 ```html
-<script>
-  window.CHATBOT_API_URL = "http://localhost:8000";
-  window.CHATBOT_BUSINESS_ID = 1;
-</script>
-<script src="http://localhost:8000/static/widget.js"></script>
+<script>window.CHATBOT_BUSINESS_ID = 1;</script>
+<script src="https://tu-servidor.com/widget.js"></script>
 ```
 
-Opcionales: `window.CHATBOT_POSITION` (`bottom-right`, `bottom-left`, `top-right`, `top-left`) y `window.CHATBOT_PRIMARY_COLOR`.
+El widget usa como API el mismo servidor del que se carga el script y le pide el nombre y el mensaje de bienvenida del negocio,
+así que no hay que repetirlos en cada web. `demo.html` e `index.html` usan este mismo widget; elige el negocio con `?business=ID`
+(p. ej. `http://localhost:8000/demo.html?business=2`).
+
+Opcionales: `window.CHATBOT_API_URL` (si la API está en otro servidor), `window.CHATBOT_POSITION`
+(`bottom-right`, `bottom-left`, `top-right`, `top-left`) y `window.CHATBOT_PRIMARY_COLOR`.
 
 ## Configuración (variables de entorno)
 
