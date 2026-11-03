@@ -68,11 +68,15 @@ Opcionales: `window.CHATBOT_POSITION` (`bottom-right`, `bottom-left`, `top-right
 | `CHATBOT_MODEL_NAME` | Llama 3.1 en `backend/models/` | Ruta o nombre del modelo. |
 | `CHATBOT_BACKEND` | según el nombre del modelo | `meta-llama` (llama.cpp) o `gpt4all`. |
 | `CHATBOT_PRELOAD` | `0` (`1` al lanzar con `python -m backend.main`) | Cargar el modelo al arrancar. |
-| `LLAMA_N_THREADS` / `LLAMA_N_GPU_LAYERS` / `LLAMA_N_BATCH` | `8` / `40` / `512` | Ajustes de llama.cpp (`LLAMA_N_GPU_LAYERS=0` para CPU). |
+| `LLAMA_N_GPU_LAYERS` / `LLAMA_N_BATCH` | `40` / `512` | Capas en GPU (se ignora si llama.cpp es solo CPU) y tamaño de lote. |
 | `CHATBOT_CONTEXT_WINDOW` | `4096` | Ventana de contexto del modelo (tokens). También vale `GPT4ALL_CONTEXT_WINDOW`. |
 | `CHATBOT_CONTEXT_TOKEN_RATIO` | `3` | Caracteres por token que se asumen al recortar el prompt (español ≈ 3). |
 | `CHATBOT_GENERATE_TIMEOUT` | `30` | Segundos máximos por respuesta del modelo (en CPU lenta, súbelo a 120–180). |
-| `LLAMA_N_THREADS` | `8` | Hilos de CPU para llama.cpp; usa el número de núcleos físicos. |
+| `LLAMA_N_THREADS` | automático | Hilos para generar: todos los núcleos lógicos si son ≤ 4, la mitad si son más. Afínalo con `scripts/bench.py`. |
+| `LLAMA_N_THREADS_BATCH` | = `LLAMA_N_THREADS` | Hilos para leer el prompt (la parte más lenta en CPU). |
+| `LLAMA_FLASH_ATTN` | `0` | `1` activa flash attention en llama.cpp; mide con el benchmark si te compensa. |
+| `CHATBOT_DOC_SNIPPETS` / `CHATBOT_DOC_SNIPPET_MAX_CHARS` | `2` / `350` | Fragmentos de documentos que entran en el prompt y su tamaño. |
+| `CHATBOT_REPLY_CACHE_SIZE` | `128` | Respuestas guardadas en memoria por prompt exacto (`0` la desactiva). |
 | `CHATBOT_MAX_FAQS`, `CHATBOT_MAX_HISTORY_TURNS`, `CHATBOT_RESERVE_RESPONSE_TOKENS` | `4`, `4`, `200` | Tamaño del contexto enviado al modelo. |
 
 ## API principal
@@ -90,9 +94,22 @@ Opcionales: `window.CHATBOT_POSITION` (`bottom-right`, `bottom-left`, `top-right
 
 ## Rendimiento en CPU
 
-El prompt (instrucciones + FAQs + historial) se procesa a ~40 tokens/s en una CPU modesta y el modelo escribe a ~7 tokens/s con un 8B Q4.
-Las FAQs que entran en el contexto se eligen por relevancia con la pregunta. Para ir más rápido:
+En CPU, lo que más tarda es **leer el prompt** (~60 tokens/s en un portátil con un 8B Q4); escribir va a ~9 tokens/s.
+Por eso el prompt está pensado para gastar poco:
 
-- Modelo más pequeño (p. ej. Llama 3.2 3B Instruct Q4_K_M, unas 2,5 veces más rápido): ponlo en `backend/models/` y define `CHATBOT_MODEL_NAME`.
-- `CHATBOT_MAX_FAQS=2` y `LLAMA_N_THREADS` = núcleos físicos.
-- Sube `CHATBOT_GENERATE_TIMEOUT` si tu equipo tarda más de 30 s.
+- **Caché de prefijo de llama.cpp:** lo fijo de cada negocio (reglas, datos, tono) va delante y se reutiliza entre preguntas;
+  lo que cambia (FAQs elegidas, documentos, historial) va al final y es lo único que se vuelve a procesar.
+- **Solo lo relevante:** las FAQs se eligen por relevancia con la pregunta y de los documentos entran como mucho 2 fragmentos,
+  recortados alrededor de las palabras de la pregunta (y ninguno si no hay coincidencias).
+- **Caché de respuestas:** la misma pregunta en el mismo estado de conversación se responde al instante.
+- **Streaming:** `/chat/stream` muestra el texto según se genera.
+
+Medir en tu equipo (con el servidor en marcha):
+
+```bash
+python scripts/bench.py --business 1 "¿Quién es Ignacio?" "¿Qué tecnologías usa?"
+```
+
+Para ir más rápido: modelo más pequeño (p. ej. Llama 3.2 3B Instruct Q4_K_M, unas 2,5 veces más rápido, con
+`CHATBOT_MODEL_NAME`), `CHATBOT_MAX_FAQS=2`, y probar distintos `LLAMA_N_THREADS` con el benchmark.
+Sube `CHATBOT_GENERATE_TIMEOUT` si tu equipo tarda más de 30 s.

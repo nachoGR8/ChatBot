@@ -234,7 +234,7 @@ def _prepare_chat(message: ChatMessage, db: Session) -> _Prepared:
         db=db,
         business_id=business.id,
         query=message.message,
-        limit=3,
+        limit=chatbot_service.max_doc_snippets,
     )
     if document_snippets:
         context += "\n\nINFORMACIÓN ADICIONAL (Documentos cargados):\n"
@@ -335,6 +335,10 @@ async def chat_stream(message: ChatMessage, db: Session = Depends(get_db)):
         plan = chatbot_service.plan_response(message.message, prep.context, **prep.kwargs)
         if isinstance(plan, str):  # saludo o servicio no disponible: no hace falta generar
             prep, plan = _Prepared(answer=plan), None
+        else:
+            cached = chatbot_service.cached_reply(plan)
+            if cached is not None:
+                prep, plan = _Prepared(answer=cached), None
 
     async def events():
         if plan is None:
@@ -386,6 +390,8 @@ async def chat_stream(message: ChatMessage, db: Session = Depends(get_db)):
             stop.set()  # corta la generación si el cliente se fue o se agotó el tiempo
 
         final = chatbot_service._clean_response("".join(parts), plan.wants_menu)
+        if final and failure is None:
+            chatbot_service.store_reply(plan, final)
         if not final:
             final = (failure or ERROR_MESSAGE).format(phone=prep.phone)
         _save_conversation_new_session(message, final)

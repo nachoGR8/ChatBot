@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 import logging
 import os
 import re
@@ -10,6 +11,7 @@ import time
 import unicodedata
 from datetime import datetime
 from pathlib import Path
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Callable, Iterator, List, Optional, Union
 
@@ -159,6 +161,11 @@ class ChatbotService:
         self.context_window = int(os.getenv("CHATBOT_CONTEXT_WINDOW", os.getenv("GPT4ALL_CONTEXT_WINDOW", "4096")))
         self.reserve_response_tokens = int(os.getenv("CHATBOT_RESERVE_RESPONSE_TOKENS", "200"))
         self.max_history_turns = int(os.getenv("CHATBOT_MAX_HISTORY_TURNS", "4"))
+        self.max_doc_snippets = int(os.getenv("CHATBOT_DOC_SNIPPETS", "2"))
+        # Caché de respuestas por prompt exacto: una pregunta repetida en el mismo estado sale al instante
+        self.reply_cache_size = int(os.getenv("CHATBOT_REPLY_CACHE_SIZE", "128"))
+        self._reply_cache: "OrderedDict[str, str]" = OrderedDict()
+        self._reply_cache_lock = threading.Lock()
         self.history_message_max_chars = int(os.getenv("CHATBOT_HISTORY_MESSAGE_MAX_CHARS", "220"))
         self._name_patterns = [
             re.compile(r"\b(?:me\s+llamo|mi\s+nombre\s+es|soy)\s+([A-ZÁÉÍÓÚÑa-záéíóúñ]+)", re.IGNORECASE),
@@ -371,23 +378,36 @@ class ChatbotService:
         try:
             from llama_cpp import Llama  # type: ignore
 
-            n_threads = int(os.getenv("LLAMA_N_THREADS", "8"))
+            import llama_cpp  # type: ignore
+
+            # Por defecto ~un hilo por núcleo físico. Python solo ve núcleos lógicos: en equipos pequeños se usan
+            # todos (suelen no tener hyper-threading); en grandes, la mitad. Afínalo con LLAMA_N_THREADS + scripts/bench.py.
+            logical = os.cpu_count() or 1
+            n_threads = int(os.getenv("LLAMA_N_THREADS", str(logical if logical <= 4 else logical // 2)))
+            n_threads_batch = int(os.getenv("LLAMA_N_THREADS_BATCH", str(n_threads)))
             n_gpu_layers = int(os.getenv("LLAMA_N_GPU_LAYERS", "40"))
+            supports_gpu = getattr(llama_cpp, "llama_supports_gpu_offload", lambda: False)()
+            if not supports_gpu:
+                n_gpu_layers = 0  # build solo CPU: no prometer GPU
             n_batch = int(os.getenv("LLAMA_N_BATCH", "512"))
             n_ctx = self.context_window
+            flash_attn = os.getenv("LLAMA_FLASH_ATTN", "0") == "1"
 
             os.environ.setdefault("GGML_CUDA_FORCE_CUBLAS", "1")
             os.environ.setdefault("GGML_CUDA_FORCE_MMQ", "1")
 
             logger.info(
-                "Cargando Meta-Llama (llama_cpp): model=%s n_threads=%s n_gpu_layers=%s n_batch=%s n_ctx=%s",
-                self.model_name, n_threads, n_gpu_layers, n_batch, n_ctx,
+                "Cargando Meta-Llama (llama_cpp): model=%s n_threads=%s n_threads_batch=%s n_gpu_layers=%s "
+                "n_batch=%s n_ctx=%s flash_attn=%s",
+                self.model_name, n_threads, n_threads_batch, n_gpu_layers, n_batch, n_ctx, flash_attn,
             )
             self.model = Llama(
                 model_path=self.model_name,
                 n_ctx=n_ctx,
                 n_threads=n_threads,
+                n_threads_batch=n_threads_batch,
                 n_gpu_layers=n_gpu_layers,
+                flash_attn=flash_attn,
                 n_batch=n_batch,
                 verbose=True,
             )
@@ -719,10 +739,9 @@ INFORMACIÓN DEL NEGOCIO:
 - Email: {business.email or 'No especificado'}
 - Dirección: {business.address or 'No especificada'}
 - Web: {business.website or 'No especificada'}
-
-PREGUNTAS FRECUENTES:
 """
-
+        # Orden pensado para la caché de llama.cpp: primero lo fijo del negocio (se reutiliza entre preguntas)
+        # y al final lo que cambia con cada pregunta (FAQs elegidas, y luego historial y documentos).
         faqs_sorted = self._rank_faqs(faqs, query)
 
         included = faqs_sorted[:max_faqs]
@@ -730,13 +749,13 @@ PREGUNTAS FRECUENTES:
         
         logger.info(f"📝 Construyendo contexto con {len(included)} FAQs de {len(faqs_sorted)} disponibles (max_faqs={max_faqs})")
 
+        faq_block = "\nPREGUNTAS FRECUENTES:\n"
         for faq in included:
             q = (faq.question or "")[: self.faq_question_max_chars]
             a = (faq.answer or "")[: self.faq_answer_max_chars]
-            context += f"\nP: {q}\nR: {a}\n"
-
+            faq_block += f"\nP: {q}\nR: {a}\n"
         if truncated:
-            context += "\n[Nota: algunas FAQs se han omitido por límite de contexto.]\n"
+            faq_block += "\n[Nota: algunas FAQs se han omitido por límite de contexto.]\n"
 
         tone_map = {
             "restaurant": "Usa un tono cálido, cercano y gastronómico 🍽️",
@@ -778,7 +797,37 @@ El cliente quiere conocer el menú del negocio. Responde siguiendo estas pautas:
 """
         else:
             context += default_behavior_instructions
-        return context
+        return context + faq_block
+
+    @staticmethod
+    def _cache_key(plan: GenerationPlan) -> str:
+        raw = "\x00".join(
+            [plan.system, plan.user, str(plan.max_tokens), str(plan.temperature), str(plan.top_p)]
+        )
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def cached_reply(self, plan: GenerationPlan) -> Optional[str]:
+        """Respuesta ya generada para exactamente el mismo prompt, si la hay."""
+        if self.reply_cache_size <= 0:
+            return None
+        key = self._cache_key(plan)
+        with self._reply_cache_lock:
+            reply = self._reply_cache.get(key)
+            if reply is not None:
+                self._reply_cache.move_to_end(key)
+        if reply is not None:
+            logger.info("⚡ Respuesta servida desde caché")
+        return reply
+
+    def store_reply(self, plan: GenerationPlan, reply: str) -> None:
+        if self.reply_cache_size <= 0 or not reply:
+            return
+        key = self._cache_key(plan)
+        with self._reply_cache_lock:
+            self._reply_cache[key] = reply
+            self._reply_cache.move_to_end(key)
+            while len(self._reply_cache) > self.reply_cache_size:
+                self._reply_cache.popitem(last=False)
 
     def plan_response(
         self,
@@ -952,14 +1001,13 @@ El cliente quiere conocer el menú del negocio. Responde siguiendo estas pautas:
         )
         if wants_all_rules:
             rules += "\n- Menciona TODAS las normas de la información, sin omitir ninguna."
-        if extra_instructions:
-            rules += "\n" + " ".join(extra_instructions)
+        extra = ("\n\n" + " ".join(extra_instructions)) if extra_instructions else ""
 
         def _build_system(context_block: str) -> str:
-            # Si hay menú extraído, inyectarlo al principio del contexto
+            # Reglas (fijas) delante para aprovechar la caché del prompt; lo variable, al final.
             if menu_extracted:
-                context_block = f"{menu_extracted}\n\n{'=' * 60}\n\n{context_block}"
-            return f"{rules}\n\n{context_block}"
+                context_block = f"{context_block}\n\n{menu_extracted}"
+            return f"{rules}\n\n{context_block}{extra}"
 
         allowed_prompt_tokens = max(1, self.context_window - self.reserve_response_tokens)
         context_token_budget = allowed_prompt_tokens
@@ -1033,6 +1081,9 @@ El cliente quiere conocer el menú del negocio. Responde siguiendo estas pautas:
         plan = self.plan_response(message, context, **kwargs)
         if isinstance(plan, str):
             return plan
+        cached = self.cached_reply(plan)
+        if cached is not None:
+            return cached
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                 fut = ex.submit(
@@ -1044,7 +1095,9 @@ El cliente quiere conocer el menú del negocio. Responde siguiendo estas pautas:
                     top_p=plan.top_p,
                 )
                 response = fut.result(timeout=self.generate_timeout)
-            return self._clean_response(response, plan.wants_menu)
+            reply = self._clean_response(response, plan.wants_menu)
+            self.store_reply(plan, reply)
+            return reply
         except Exception as e:  # pragma: no cover - best effort logging
             logger.exception("Error en get_response: %s", e, exc_info=True)
             return "Lo siento, ha ocurrido un error generando la respuesta."

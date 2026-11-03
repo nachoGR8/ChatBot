@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import re
 import uuid
 from dataclasses import dataclass
@@ -56,6 +57,7 @@ class DocumentService:
     MIN_CHARS_PER_CHUNK = 250
     SEARCH_WINDOW = 200
     MIN_SCORE = 45
+    SNIPPET_MAX_CHARS = int(os.getenv("CHATBOT_DOC_SNIPPET_MAX_CHARS", "350"))
 
     def _extension_for(self, filename: Optional[str]) -> str:
         if not filename:
@@ -1035,6 +1037,27 @@ Genera {faqs_pass2} FAQs AHORA:"""
             faqs_created=faqs_created,
         )
 
+    @staticmethod
+    def _snippet_around(text: str, query: str, max_chars: int) -> str:
+        """Recorta `text` a `max_chars` centrado en la primera palabra de la pregunta que aparezca."""
+        text = " ".join((text or "").split())
+        if len(text) <= max_chars:
+            return text
+        lower = text.lower()
+        positions = [
+            lower.find(word[:5])
+            for word in re.findall(r"\w+", query.lower())
+            if len(word) > 3 and lower.find(word[:5]) >= 0
+        ]
+        start = max(0, min(positions) - max_chars // 3) if positions else 0
+        start = min(start, len(text) - max_chars)
+        window = text[start : start + max_chars]
+        if start > 0:
+            window = "…" + window.split(" ", 1)[-1]
+        if start + max_chars < len(text):
+            window = window.rsplit(" ", 1)[0] + "…"
+        return window
+
     def get_relevant_chunks(
         self,
         *,
@@ -1081,9 +1104,6 @@ Genera {faqs_pass2} FAQs AHORA:"""
             chunk = choice_map.get(chunk_id)
             if chunk is None:
                 continue
-            text = chunk.text.strip()
-            if len(text) > 420:
-                text = text[:420].rsplit(" ", 1)[0] + "…"
             source = None
             try:
                 if chunk.document:
@@ -1092,7 +1112,7 @@ Genera {faqs_pass2} FAQs AHORA:"""
                 source = None
             snippets.append(
                 {
-                    "text": text,
+                    "text": self._snippet_around(chunk.text, query, self.SNIPPET_MAX_CHARS),
                     "score": float(score),
                     "document_id": chunk.document_id,
                     "source": source,
@@ -1101,27 +1121,7 @@ Genera {faqs_pass2} FAQs AHORA:"""
             if len(snippets) >= limit:
                 break
 
-        if not snippets:
-            fallback = chunks[:limit]
-            for chunk in fallback:
-                text = chunk.text.strip()
-                if len(text) > 420:
-                    text = text[:420].rsplit(" ", 1)[0] + "…"
-                source = None
-                try:
-                    if chunk.document:
-                        source = chunk.document.original_filename
-                except Exception:  # pragma: no cover
-                    source = None
-                snippets.append(
-                    {
-                        "text": text,
-                        "score": 0.0,
-                        "document_id": chunk.document_id,
-                        "source": source,
-                    }
-                )
-
+        # Sin coincidencias no se añade nada: meter trozos al azar solo alarga el prompt (y el tiempo de respuesta).
         return snippets
 
 
