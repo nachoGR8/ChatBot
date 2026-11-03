@@ -24,6 +24,8 @@ chatbot/
 │       │   └── document_service.py  # extracción de texto, chunking, generación de FAQs
 │       ├── models.py  schemas.py  database.py  config.py
 ├── frontend/                        # index.html, demo.html, admin.html, widget.js
+├── tests/                           # pytest (lógica + API con modelo falso)
+├── eval/cases.json  scripts/        # casos de evaluación, eval.py, bench.py
 └── run_backend_fixed.ps1            # arranque en Windows (venv + deps + servidor)
 ```
 
@@ -116,3 +118,35 @@ Para ir más rápido: modelo más pequeño (p. ej. Llama 3.2 3B Instruct Q4_K_M,
 Cópialo a `backend/models/` y arranca con `CHATBOT_MODEL_NAME=Llama-3.2-3B-Instruct-Q4_K_M.gguf` **y `CHATBOT_BACKEND=meta-llama`**
 (el backend solo se deduce solo si el nombre del fichero contiene `meta-llama`). Además: `CHATBOT_MAX_FAQS=2`, y probar distintos `LLAMA_N_THREADS` con el benchmark.
 Sube `CHATBOT_GENERATE_TIMEOUT` si tu equipo tarda más de 30 s.
+
+## Calidad: tests y evaluación
+
+- **Tests** (`pytest`, sin modelo ni red: usan un LLM falso y SQLite temporal). Cubren la selección de FAQs, el umbral de coincidencia directa
+  (con la regresión «estudios» ≠ «certificaciones»), el recorte de fragmentos, la caché LRU y los endpoints `/chat` y `/chat/stream`.
+  Se ejecutan en GitHub Actions en cada push y PR.
+
+  ```bash
+  pip install -r backend/requirements-dev.txt
+  python -m pytest
+  ```
+
+- **Evaluación con el modelo real** (servidor en marcha): `python scripts/eval.py --business 1 --out eval/results.md`.
+  Cada caso de `eval/cases.json` comprueba que la respuesta no esté vacía, sea breve, hable en tercera persona, no filtre el prompt
+  y contenga las palabras esperadas. Edita `expect_any` con datos de tu CV para que mida aciertos reales y guarda el informe resultante aquí.
+
+## Decisiones de diseño
+
+| Decisión | Motivo |
+|---|---|
+| LLM local con llama.cpp | Sin coste por token ni datos enviados a terceros; a cambio, hay que cuidar la latencia en CPU. |
+| Prompt con prefijo fijo y parte variable al final | Reutiliza la caché KV de llama.cpp: solo se reprocesa lo que cambia. |
+| FAQs y fragmentos elegidos por relevancia | Menos tokens = respuestas más rápidas y menos confusión del modelo. |
+| Respuesta directa sin LLM si la FAQ coincide de verdad | Rápido y sin alucinaciones en datos críticos; el umbral evita falsos positivos. |
+| Un lock alrededor de la generación | `llama_cpp.Llama` no es thread-safe; sin él, dos chats a la vez tumbaban el servidor. |
+| Streaming SSE con texto final limpio | El usuario ve respuesta al instante y el cliente sustituye lo pintado por la versión depurada. |
+
+## Límites conocidos
+
+- Una sola generación a la vez (lock): pensado para demo/uso ligero, no para mucho tráfico concurrente.
+- En CPU la primera palabra tarda segundos; con un modelo de 3B es unas 2,5 veces más rápida, a costa de calidad.
+- El panel de administración depende de `ADMIN_API_KEY`; no expongas el servidor a internet sin limitar CORS y aplicar rate limiting.
