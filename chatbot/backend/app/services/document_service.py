@@ -518,7 +518,8 @@ TAREA: Genera {faqs_pass1} FAQs completas basadas SOLO en la información del do
 REGLAS:
 1. Respuestas de 2-4 oraciones con información completa
 2. NO inventes nada - usa SOLO el documento
-3. Categorías específicas: acceso, normas, instalaciones, clases, reservas, horarios, seguridad, higiene, conducta, servicios{special_instructions}
+3. Categoría: una palabra que describa el tema (por ejemplo servicios, horarios, contacto, reservas, normas, formación, experiencia, tecnologías)
+4. Redacta SIEMPRE en tercera persona sobre el negocio o las personas del documento (por ejemplo "Ignacio estudió..."). Si el documento está en primera persona (como un CV), reescríbelo: nunca uses "yo", "mi", "mis" ni "estoy"{special_instructions}
 
 FORMATO EXACTO (una FAQ por bloque):
 P: ¿Pregunta específica?
@@ -526,9 +527,9 @@ R: Respuesta completa en 2-4 oraciones con detalles importantes.
 C: categoría
 
 EJEMPLO:
-P: ¿Qué necesito para entrar al gimnasio?
-R: Necesitas tu tarjeta de socio activa para registrar entrada en recepción. Es obligatoria y personal. Si la olvidas, presenta DNI en recepción para acceso temporal. Te recomendamos llevarla siempre contigo.
-C: acceso
+P: ¿Cómo se puede reservar una cita?
+R: Las citas se reservan llamando por teléfono o escribiendo al correo del negocio. Conviene indicar el día y la hora preferidos para confirmar la disponibilidad. Si no hay hueco, el equipo propondrá otra fecha cercana.
+C: reservas
 
 Genera {faqs_pass1} FAQs siguiendo este formato EXACTO:"""
 
@@ -625,6 +626,7 @@ DOCUMENTO:
 {text_sample}
 
 TAREA: Genera {faqs_pass2} FAQs sobre detalles, casos específicos o excepciones.
+Redacta en tercera persona sobre el negocio o las personas del documento; nunca uses "yo", "mi" ni "estoy".
 
 FORMATO EXACTO (igual que antes):
 P: ¿Pregunta específica?
@@ -632,9 +634,9 @@ R: Respuesta de 2-4 oraciones con detalles.
 C: categoría
 
 EJEMPLO:
-P: ¿Puedo llevar toalla propia al spa?
-R: Sí, puedes llevar tu propia toalla al spa. Sin embargo, también ofrecemos toallas limpias disponibles en recepción. Te recomendamos usar toalla al sentarte en bancos o máquinas por higiene.
-C: higiene
+P: ¿Se puede cancelar una reserva?
+R: Sí, las reservas se pueden cancelar avisando con antelación por teléfono o correo. Así el hueco queda libre para otros clientes. Si hay algún cargo por cancelar tarde, el negocio lo comunica al reservar.
+C: reservas
 
 Genera {faqs_pass2} FAQs AHORA:"""
 
