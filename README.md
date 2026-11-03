@@ -69,7 +69,8 @@ Opcionales: `window.CHATBOT_POSITION` (`bottom-right`, `bottom-left`, `top-right
 | `CHATBOT_BACKEND` | según el nombre del modelo | `meta-llama` (llama.cpp) o `gpt4all`. |
 | `CHATBOT_PRELOAD` | `0` (`1` al lanzar con `python -m backend.main`) | Cargar el modelo al arrancar. |
 | `LLAMA_N_THREADS` / `LLAMA_N_GPU_LAYERS` / `LLAMA_N_BATCH` | `8` / `40` / `512` | Ajustes de llama.cpp (`LLAMA_N_GPU_LAYERS=0` para CPU). |
-| `GPT4ALL_CONTEXT_WINDOW` | `2048` | Ventana de contexto. |
+| `CHATBOT_CONTEXT_WINDOW` | `4096` | Ventana de contexto del modelo (tokens). También vale `GPT4ALL_CONTEXT_WINDOW`. |
+| `CHATBOT_CONTEXT_TOKEN_RATIO` | `3` | Caracteres por token que se asumen al recortar el prompt (español ≈ 3). |
 | `CHATBOT_GENERATE_TIMEOUT` | `30` | Segundos máximos por respuesta del modelo (en CPU lenta, súbelo a 120–180). |
 | `LLAMA_N_THREADS` | `8` | Hilos de CPU para llama.cpp; usa el número de núcleos físicos. |
 | `CHATBOT_MAX_FAQS`, `CHATBOT_MAX_HISTORY_TURNS`, `CHATBOT_RESERVE_RESPONSE_TOKENS` | `4`, `4`, `200` | Tamaño del contexto enviado al modelo. |
@@ -85,3 +86,12 @@ Opcionales: `window.CHATBOT_POSITION` (`bottom-right`, `bottom-left`, `top-right
 | `POST /api/train-ia` | Subir PDF/DOCX y generar FAQs |
 | `GET /status`, `GET /health` | Estado del modelo y salud del servicio |
 | `GET /admin/model_status`, `POST /admin/reinit_model`, `POST /admin/clear_model_failure` | Operaciones sobre el modelo |
+
+## Rendimiento en CPU
+
+El prompt (instrucciones + FAQs + historial) se procesa a ~40 tokens/s en una CPU modesta y el modelo escribe a ~7 tokens/s con un 8B Q4.
+Las FAQs que entran en el contexto se eligen por relevancia con la pregunta. Para ir más rápido:
+
+- Modelo más pequeño (p. ej. Llama 3.2 3B Instruct Q4_K_M, unas 2,5 veces más rápido): ponlo en `backend/models/` y define `CHATBOT_MODEL_NAME`.
+- `CHATBOT_MAX_FAQS=2` y `LLAMA_N_THREADS` = núcleos físicos.
+- Sube `CHATBOT_GENERATE_TIMEOUT` si tu equipo tarda más de 30 s.

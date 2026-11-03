@@ -12,9 +12,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
+from rapidfuzz import fuzz
+
 from ..models import Business, Conversation, DocumentChunk, FAQ
 
 logger = logging.getLogger("chatbot")
+
+# Palabras vacías para puntuar la relevancia de una FAQ respecto a la pregunta
+_STOPWORDS = frozenset(
+    "el la los las un una unos unas de del al y o en a que es son se me te mi tu su sus por para con sin como "
+    "cual cuales quien quienes donde cuando hay tiene tienen puedo puede pueden quiero quieres hola buenas "
+    "dime saber sobre algo muy mas".split()
+)
 
 MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
 DEFAULT_MODEL_FILE = "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf"
@@ -133,8 +142,8 @@ class ChatbotService:
         self.max_faqs = int(os.getenv("CHATBOT_MAX_FAQS", "4"))
         self.faq_answer_max_chars = int(os.getenv("CHATBOT_FAQ_ANSWER_MAX_CHARS", "250"))
         self.faq_question_max_chars = int(os.getenv("CHATBOT_FAQ_QUESTION_MAX_CHARS", "200"))
-        self.context_token_ratio = int(os.getenv("CHATBOT_CONTEXT_TOKEN_RATIO", "4"))
-        self.context_window = int(os.getenv("GPT4ALL_CONTEXT_WINDOW", "2048"))
+        self.context_token_ratio = int(os.getenv("CHATBOT_CONTEXT_TOKEN_RATIO", "3"))  # español: ~3 caracteres/token
+        self.context_window = int(os.getenv("CHATBOT_CONTEXT_WINDOW", os.getenv("GPT4ALL_CONTEXT_WINDOW", "4096")))
         self.reserve_response_tokens = int(os.getenv("CHATBOT_RESERVE_RESPONSE_TOKENS", "200"))
         self.max_history_turns = int(os.getenv("CHATBOT_MAX_HISTORY_TURNS", "4"))
         self.history_message_max_chars = int(os.getenv("CHATBOT_HISTORY_MESSAGE_MAX_CHARS", "220"))
@@ -352,7 +361,7 @@ class ChatbotService:
             n_threads = int(os.getenv("LLAMA_N_THREADS", "8"))
             n_gpu_layers = int(os.getenv("LLAMA_N_GPU_LAYERS", "40"))
             n_batch = int(os.getenv("LLAMA_N_BATCH", "512"))
-            n_ctx = int(os.getenv("CHATBOT_CONTEXT_WINDOW", str(self.context_window)))
+            n_ctx = self.context_window
 
             os.environ.setdefault("GGML_CUDA_FORCE_CUBLAS", "1")
             os.environ.setdefault("GGML_CUDA_FORCE_MMQ", "1")
@@ -441,6 +450,35 @@ class ChatbotService:
             return str(
                 self.model.generate(prompt, max_tokens=max_tokens, temp=temperature, top_p=top_p, top_k=top_k)
             )
+
+    def generate_chat(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int,
+        temperature: float,
+        top_p: float = 0.85,
+        top_k: int = 40,
+    ) -> str:
+        """Como `generate`, pero con la plantilla de chat del modelo (llama.cpp). GPT4All recibe texto plano."""
+        if self._backend == "llama_cpp":
+            with self._generate_lock:
+                out = self.model.create_chat_completion(
+                    messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    top_k=top_k,
+                )
+            try:
+                return out["choices"][0]["message"]["content"] or ""
+            except (KeyError, IndexError, TypeError):
+                return str(out)
+        return self.generate(
+            f"{system}\n\nCliente: {user}\n\nRespuesta:",
+            max_tokens=max_tokens, temperature=temperature, top_p=top_p, top_k=top_k,
+        )
 
     @staticmethod
     def _clean_response(response: str, wants_menu: bool) -> str:
@@ -580,6 +618,34 @@ class ChatbotService:
             "reserve_response_tokens": self.reserve_response_tokens,
         }
 
+    @staticmethod
+    def _normalize(text: str) -> str:
+        """Minúsculas y sin tildes, para comparar textos."""
+        decomposed = unicodedata.normalize("NFD", (text or "").lower())
+        return "".join(c for c in decomposed if unicodedata.category(c) != "Mn")
+
+    def _rank_faqs(self, faqs: List[FAQ], query: Optional[str]) -> List[FAQ]:
+        """Ordena las FAQs por relevancia respecto a la pregunta; sin pregunta, solo por prioridad."""
+        def priority(f: FAQ) -> int:
+            return getattr(f, "priority", 0) or 0
+
+        keywords = [
+            w for w in re.findall(r"\w+", self._normalize(query or ""))
+            if len(w) > 2 and w not in _STOPWORDS
+        ]
+        if not keywords:
+            return sorted(faqs, key=priority, reverse=True)
+
+        norm_query = " ".join(keywords)
+
+        def score(f: FAQ) -> float:
+            q = self._normalize(f.question)
+            a = self._normalize(f.answer)
+            points = sum(2 for kw in keywords if kw[:5] in q) + sum(1 for kw in keywords if kw[:5] in a)
+            return points + fuzz.token_set_ratio(norm_query, q) / 100
+
+        return sorted(faqs, key=lambda f: (score(f), priority(f)), reverse=True)
+
     def build_context(
         self,
         business: Business,
@@ -588,11 +654,12 @@ class ChatbotService:
         *,
         include_default_instructions: bool = True,
         menu_focus: bool = False,
+        query: Optional[str] = None,
     ) -> str:
         if max_faqs is None:
             max_faqs = self.max_faqs
 
-        context = f"""Eres un asistente virtual del negocio: {business.name}
+        context = f"""NEGOCIO: {business.name}
 
 INFORMACIÓN DEL NEGOCIO:
 - Tipo: {business.business_type}
@@ -601,13 +668,10 @@ INFORMACIÓN DEL NEGOCIO:
 - Dirección: {business.address or 'No especificada'}
 - Web: {business.website or 'No especificada'}
 
-PREGUNTAS FRECUENTES (usa como referencia, no copies literalmente):
+PREGUNTAS FRECUENTES:
 """
 
-        try:
-            faqs_sorted = sorted(faqs, key=lambda f: getattr(f, "priority", 0), reverse=True)
-        except Exception:
-            faqs_sorted = faqs
+        faqs_sorted = self._rank_faqs(faqs, query)
 
         included = faqs_sorted[:max_faqs]
         truncated = len(faqs_sorted) > max_faqs
@@ -617,7 +681,7 @@ PREGUNTAS FRECUENTES (usa como referencia, no copies literalmente):
         for faq in included:
             q = (faq.question or "")[: self.faq_question_max_chars]
             a = (faq.answer or "")[: self.faq_answer_max_chars]
-            context += f"\n• Si el cliente pregunta '{q}', puedes responder con algo como: '{a}'.\n"
+            context += f"\nP: {q}\nR: {a}\n"
 
         if truncated:
             context += "\n[Nota: algunas FAQs se han omitido por límite de contexto.]\n"
@@ -642,56 +706,10 @@ PREGUNTAS FRECUENTES (usa como referencia, no copies literalmente):
                 f"{business.welcome_message.strip()}\n"
             )
 
-        default_behavior_instructions = """
-=== INSTRUCCIONES GENERALES DE COMPORTAMIENTO ===
-
-Eres un asistente virtual profesional y amable diseñado para ayudar a los clientes de una empresa.
-
-TU MISIÓN:
-- Ofrecer respuestas claras, útiles y empáticas.
-- Representar los valores de la marca con un tono profesional, cercano y positivo.
-- Resolver dudas frecuentes, ofrecer información actualizada y guiar al cliente con naturalidad.
-
-TONO Y ESTILO:
-- Siempre saluda cordialmente al inicio (puedes incluir un emoji si encaja con la marca).
-- Usa un tono adecuado al tipo de negocio:
-  • Restaurantes: cercano y gastronómico. Ej: “🍽️ ¡Hola! Será un placer ayudarte con tu reserva.”
-  • Gimnasios: enérgico y motivador. Ej: “💪 ¡Hola! Gracias por contactar con nuestro gimnasio.”
-  • Hoteles: profesional y servicial. Ej: “🏨 Bienvenido/a, estaré encantado de ayudarte con tu estancia.”
-  • Tiendas: amable y práctico. Ej: “🛍️ ¡Hola! Cuéntame qué necesitas y te ayudo enseguida.”
-  • Clínicas o centros médicos: respetuoso y calmado. Ej: “👩‍⚕️ ¡Hola! Estoy aquí para ayudarte con la información que necesites.”
-  • Otros negocios: tono neutro pero siempre educado y servicial.
-
-CÓMO DIRIGIRSE AL CLIENTE:
-- Usa un trato de “tú” si la empresa se comunica de forma informal, o “usted” si el negocio es más formal (médico, legal, etc.).
-- Evita tecnicismos innecesarios y mantén frases naturales.
-- Nunca discutas ni respondas con ironía; si el cliente está molesto, responde con calma y cortesía.
-
-ESTRUCTURA DE RESPUESTA:
-1. **Saludo breve + empatía:** demuestra atención y disposición (“¡Hola! Claro que sí, te cuento…”).
-2. **Respuesta directa y útil:** proporciona la información principal sin rodeos.
-3. **Matiz extra:** añade un dato o consejo breve que aporte valor.
-4. **Cierre amable:** ofrece ayuda adicional (“¿Quieres que te dé más detalles?” o “¿Deseas que te ayude con algo más?”).
-
-REGLAS DE CONTENIDO:
-- Usa la información del negocio y las FAQs disponibles.
-- Si el cliente pide la web o sitio, utiliza la URL indicada en la información del negocio. No confundas la web con el email.
-- Si no sabes algo, sugiere amablemente contactar directamente (“Puedes llamar al {teléfono} o escribir a {email} para más detalles.”).
-- No inventes datos ni hagas suposiciones peligrosas (por ejemplo, precios o diagnósticos).
-- Si el usuario da las gracias o se despide, responde de forma personalizada y breve (“¡Gracias a ti! 😊 Que tengas un gran día.”).
-- Nunca reveles información interna ni menciones que eres un modelo de IA.
-
-FORMATOS:
-- Respuestas concisas (3-5 frases máximo).
-- Puedes usar listas cortas (máximo 3 puntos) si ayuda a la claridad.
-- Evita repeticiones o copiar texto literal del contexto.
-
-EN CASO DE ERRORES:
-- Si el cliente hace una pregunta fuera del alcance (ej. algo muy técnico o no relacionado), responde con cortesía y redirige (“No dispongo de esa información exacta, pero puedes consultar a nuestro equipo en {email}.”).
-
-OBJETIVO FINAL:
-Haz que el cliente se sienta atendido, escuchado y guiado, como si hablara con una persona real del negocio.
-"""
+        default_behavior_instructions = (
+            "\nSi el cliente da las gracias o se despide, responde de forma breve y cordial. "
+            "Si pregunta por la web, usa la URL indicada en la información del negocio (no el email).\n"
+        )
 
         if include_default_instructions:
             context += default_behavior_instructions
@@ -864,64 +882,47 @@ El cliente quiere conocer el menú del negocio. Responde siguiendo estas pautas:
                     "Si no encuentras información del menú completo, di que no tienes esa información disponible."
                 )
 
-        def _build_prompt(context_block: str) -> str:
+        business_name = getattr(business, "name", None) or "este negocio"
+        long_answer = wants_all_rules or wants_menu
+        rules = (
+            f"Eres el asistente virtual de {business_name}. Atiendes a clientes en español, con tono amable y cercano, "
+            "tratando de tú.\n"
+            "REGLAS:\n"
+            "- Usa únicamente la información de abajo; si no está, dilo y sugiere contactar con el negocio "
+            "(teléfono o email).\n"
+            + ("" if long_answer else "- Responde solo a lo que se pregunta, en 1 a 3 frases completas.\n")
+            + "- Habla de las personas y del negocio en tercera persona; no te hagas pasar por una persona concreta "
+            "ni menciones que eres una IA.\n"
+            "- No inventes datos, precios ni horarios. No mezcles temas distintos. No hagas preguntas al final. "
+            "No repitas frases.\n"
+            "- No uses etiquetas como 'Cliente:' o 'Respuesta:'."
+        )
+        if wants_all_rules:
+            rules += "\n- Menciona TODAS las normas de la información, sin omitir ninguna."
+        if extra_instructions:
+            rules += "\n" + " ".join(extra_instructions)
+
+        def _build_system(context_block: str) -> str:
             # Si hay menú extraído, inyectarlo al principio del contexto
-            enhanced_context = context_block
             if menu_extracted:
-                enhanced_context = f"{menu_extracted}\n\n{'='*60}\n\n{context_block}"
-            
-            # Instrucciones base variables según el tipo de consulta
-            if wants_all_rules:
-                # Prompt especial para listar normas (sin límite de frases)
-                base = (
-                    f"Información del negocio:\n{enhanced_context}\n\n"
-                    f"Cliente: {message}\n\n"
-                    "Eres una persona que trabaja en este negocio y hablas con el cliente en tono amable. "
-                    "El cliente pregunta por las normas. Debes listar TODAS las normas mencionadas en la información de arriba. "
-                    "Escribe una respuesta COMPLETA y LARGA mencionando todas las normas sin omitir ninguna. "
-                    "No te limites a 1 o 2 normas. Menciona TODAS. "
-                    "No menciones que eres asistente virtual."
-                )
-            else:
-                # Prompt normal para respuestas cortas
-                base = (
-                    f"Información del negocio:\n{enhanced_context}\n\n"
-                    f"Cliente: {message}\n\n"
-                    "Eres una persona que trabaja en este negocio y hablas con el cliente en tono amable, natural y cercano. "
-                    "Responde SOLO lo que el cliente pregunta. "
-                    "IMPORTANTE: Si el cliente pregunta algo específico, responde ÚNICAMENTE sobre ese tema. "
-                    "NO mezcles información de diferentes temas o FAQs en una misma respuesta. "
-                    "NO combines múltiples FAQs si el cliente solo preguntó por una cosa específica. "
-                    "Da una respuesta directa de una o dos frases completas, sin sonar robótico ni demasiado formal. "
-                    "NO hagas preguntas adicionales al final de tu respuesta. "
-                    "NO preguntes '¿Qué harías si...?' ni generes escenarios hipotéticos. "
-                    "NO repitas la misma frase múltiples veces. "
-                    "Termina tu respuesta de forma natural y concisa. "
-                    "Nunca respondas solo con un saludo. "
-                    "No menciones que eres asistente virtual ni uses expresiones como 'respuesta:' o 'cliente:'."
-                )
-            if extra_instructions:
-                base += "\n" + " ".join(extra_instructions)
-            return base + "\n\nRespuesta:"
+                context_block = f"{menu_extracted}\n\n{'=' * 60}\n\n{context_block}"
+            return f"{rules}\n\n{context_block}"
 
         allowed_prompt_tokens = max(1, self.context_window - self.reserve_response_tokens)
         context_token_budget = allowed_prompt_tokens
-        safe_context = self._prepare_context_for_prompt(context, message, max_tokens=context_token_budget)
-        prompt = _build_prompt(safe_context)
+        system_prompt = _build_system(self._prepare_context_for_prompt(context, message, max_tokens=context_token_budget))
 
-        approx_tokens = max(1, len(prompt) // max(1, self.context_token_ratio))
+        approx_tokens = max(1, (len(system_prompt) + len(message)) // max(1, self.context_token_ratio))
         shrink_attempts = 0
         while approx_tokens > allowed_prompt_tokens and shrink_attempts < 5 and context_token_budget > 64:
             shrink_attempts += 1
             context_token_budget = max(32, int(context_token_budget * 0.75))
-            safe_context = self._prepare_context_for_prompt(context, message, max_tokens=context_token_budget)
-            prompt = _build_prompt(safe_context)
-            approx_tokens = max(1, len(prompt) // max(1, self.context_token_ratio))
+            system_prompt = _build_system(self._prepare_context_for_prompt(context, message, max_tokens=context_token_budget))
+            approx_tokens = max(1, (len(system_prompt) + len(message)) // max(1, self.context_token_ratio))
 
         if approx_tokens > allowed_prompt_tokens:
             context_token_budget = max(32, allowed_prompt_tokens // 2)
-            safe_context = self._prepare_context_for_prompt(context, message, max_tokens=context_token_budget)
-            prompt = _build_prompt(safe_context)
+            system_prompt = _build_system(self._prepare_context_for_prompt(context, message, max_tokens=context_token_budget))
 
         temp_value = temperature if temperature is not None else 0.45
         # Para menú usar temperatura muy baja para evitar invenciones
@@ -968,8 +969,9 @@ El cliente quiere conocer el menú del negocio. Responde siguiendo estas pautas:
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                 fut = ex.submit(
-                    self.generate,
-                    prompt,
+                    self.generate_chat,
+                    system_prompt,
+                    message,
                     max_tokens=max_tokens_out,
                     temperature=temp_value,
                     top_p=top_p_value,

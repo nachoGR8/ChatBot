@@ -42,18 +42,6 @@ RECOMMENDATION_INSTRUCTION = (
     "\nEl cliente está pidiendo una recomendación concreta. Usa la información del negocio y las FAQs para sugerir como máximo dos opciones específicas (platos, servicios o planes), explica brevemente por qué encajan con lo que pide y ofrece una alternativa opcional si aplica."
 )
 
-EXTRA_INSTRUCTIONS = """
-INSTRUCCIONES ADICIONALES:
-- Responde con calidez, cercanía y profesionalidad; puedes abrir con un saludo breve y algún emoji si encaja con la marca.
-- Entrega la información solicitada y, si aporta valor, añade un matiz extra o un ejemplo corto.
-- Usa frases naturales; si lo ves útil, incluye una lista corta (máximo 3 puntos) para elementos clave.
-- Añade como máximo una pregunta amable orientada a ofrecer más ayuda (por ejemplo, si desea más detalles); nunca pidas al usuario información que correspondería al negocio.
-- No repitas la pregunta del usuario ni añadas múltiples preguntas.
-- No incluyas roles como 'cliente' o 'asistente' en la respuesta.
-- Si no sabes la respuesta, sugiere amablemente contactar con el negocio.
-- Si el usuario da las gracias o se despide, responde de forma amable y personalizada.
-"""
-
 
 def _save_conversation(db: Session, message: ChatMessage, bot_response: str) -> None:
     try:
@@ -177,6 +165,7 @@ async def chat(message: ChatMessage, db: Session = Depends(get_db)):
             max_faqs=max_faqs_,
             include_default_instructions=not is_critical_request,
             menu_focus=is_critical_request,
+            query=message.message,
         )
 
     context = build(max_faqs)
@@ -236,8 +225,6 @@ async def chat(message: ChatMessage, db: Session = Depends(get_db)):
 
     if chatbot_service.is_recommendation_request(message.message):
         context += RECOMMENDATION_INSTRUCTION
-
-    context += EXTRA_INSTRUCTIONS
 
     # 6) Ajustar el contexto a la ventana del modelo
     ratio = chatbot_service.context_token_ratio
