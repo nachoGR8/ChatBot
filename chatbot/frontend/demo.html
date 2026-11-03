@@ -412,6 +412,7 @@
                                     class="chatbot-input" 
                                     id="chatbot-input"
                                     placeholder="Escribe tu mensaje..."
+                                    maxlength="1000"
                                 >
                                 <button class="chatbot-send-btn" id="chatbot-send-btn">
                                     Enviar
@@ -764,6 +765,15 @@
                         });
                         if (!fallback.ok) throw new Error('Error en la respuesta del servidor');
                         this.addMessage((await fallback.json()).response);
+                        return;
+                    }
+                    if (response.status === 429 || response.status === 422) {
+                        let detail = 'El mensaje es demasiado largo o está vacío. Prueba con uno más corto.';
+                        if (response.status === 429) {
+                            detail = 'Demasiados mensajes seguidos. Espera un momento y vuelve a intentarlo.';
+                            try { detail = (await response.json()).detail || detail; } catch (e) {}
+                        }
+                        this.addMessage(detail);
                         return;
                     }
                     if (!response.ok || !response.body) {

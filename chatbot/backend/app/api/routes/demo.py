@@ -6,12 +6,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 
 from ...models import Business, Conversation, FAQ
-from ..dependencies import get_db
+from ..dependencies import get_db, verify_admin_api_key
 
 router = APIRouter(tags=["demo"])
 
 
-@router.post("/seed-demo")
+@router.post("/seed-demo", dependencies=[Depends(verify_admin_api_key)])
 def seed_demo_data(
     db: Session = Depends(get_db),
     reset: bool = Query(False, description="Si es true, borra los datos existentes y los recrea"),

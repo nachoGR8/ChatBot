@@ -13,9 +13,6 @@ STORAGE_DIR = PROJECT_ROOT / "storage"
 DOCUMENTS_DIR = STORAGE_DIR / "documents"
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 
-# Environment driven flags
-ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
-
 # Default favicon content used if no file exists in the frontend directory
 DEFAULT_FAVICON_SVG = """<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\">

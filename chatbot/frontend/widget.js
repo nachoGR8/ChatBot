@@ -3,9 +3,14 @@
 // =====================
 
 (function() {
+    // Por defecto la API está en el mismo servidor que sirve este script (<script src=".../widget.js">).
+    const scriptOrigin = (() => {
+        try { return new URL(document.currentScript.src).origin; } catch (e) { return 'http://localhost:8000'; }
+    })();
+
     // Configuración
     const CONFIG = {
-        apiUrl: window.CHATBOT_API_URL || 'http://localhost:8000',
+        apiUrl: window.CHATBOT_API_URL || scriptOrigin,
         businessId: window.CHATBOT_BUSINESS_ID || 1,
         position: window.CHATBOT_POSITION || 'bottom-right', // 'bottom-right', 'bottom-left', 'top-right', 'top-left'
         primaryColor: window.CHATBOT_PRIMARY_COLOR || '#6366f1',
@@ -479,7 +484,7 @@
                         </div>
                     </div>
                     <div class="chatbot-input-container">
-                        <input type="text" class="chatbot-input" id="chatbot-input" placeholder="Escribe tu mensaje..." autocomplete="off"/>
+                        <input type="text" class="chatbot-input" id="chatbot-input" placeholder="Escribe tu mensaje..." autocomplete="off" maxlength="1000"/>
                         <button class="chatbot-send-button" id="chatbot-send">
                             <svg viewBox="0 0 24 24">
                                 <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
@@ -659,6 +664,7 @@
             if (response.status === 404 || response.status === 405) {
                 return this.replyWithoutStreaming(payload);
             }
+            if (await this.showRejection(response)) return;
             if (!response.ok || !response.body) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
@@ -708,12 +714,28 @@
             }
         }
 
+        // 429 (demasiados mensajes) y 422 (mensaje no válido): se explica al usuario en vez de un error genérico.
+        async showRejection(response) {
+            if (response.status === 429) {
+                let detail = 'Demasiados mensajes seguidos. Espera un momento y vuelve a intentarlo.';
+                try { detail = (await response.json()).detail || detail; } catch (e) {}
+                this.addMessage(detail);
+                return true;
+            }
+            if (response.status === 422) {
+                this.addMessage('El mensaje es demasiado largo o está vacío. Prueba con uno más corto.');
+                return true;
+            }
+            return false;
+        }
+
         async replyWithoutStreaming(payload) {
             const response = await fetch(`${CONFIG.apiUrl}/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
+            if (await this.showRejection(response)) return;
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }

@@ -1,10 +1,14 @@
 """Pydantic schemas used by the API."""
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+# Un mensaje enorme llenaría la ventana del modelo y bloquearía la generación para todos.
+MAX_MESSAGE_CHARS = int(os.getenv("CHATBOT_MAX_MESSAGE_CHARS", "1000"))
 
 try:
     from pydantic import ConfigDict  # type: ignore
@@ -83,8 +87,8 @@ class FAQResponse(BaseModel):
 
 class ChatMessage(BaseModel):
     business_id: int
-    session_id: str
-    message: str
+    session_id: str = Field(min_length=1, max_length=100)  # mismo límite que la columna en la BD
+    message: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
 
 
 class ChatResponse(BaseModel):

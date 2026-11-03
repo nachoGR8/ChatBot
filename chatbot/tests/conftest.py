@@ -8,7 +8,8 @@ _TMP = tempfile.mkdtemp(prefix="chatbot-tests-")
 os.environ["DATABASE_URL"] = f"sqlite:///{_TMP}/test.db"
 os.environ["CHATBOT_PRELOAD"] = "0"
 os.environ["CHATBOT_WARMUP"] = "0"
-os.environ.setdefault("ADMIN_API_KEY", "test-key")
+os.environ["ADMIN_API_KEY"] = "test-key"
+os.environ["CHATBOT_RATE_LIMIT_PER_MIN"] = "0"  # cada test de límite lo activa a propósito
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest  # noqa: E402
@@ -77,6 +78,10 @@ def client(app, monkeypatch):
     async def no_delay():
         return None
 
+    from backend.app.api.dependencies import chat_rate_limiter
+
     monkeypatch.setattr("backend.app.api.routes.chat._natural_delay", no_delay)
+    chat_rate_limiter.reset()
     with TestClient(app) as c:
         yield c
+    chat_rate_limiter.reset()

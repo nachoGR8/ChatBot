@@ -9,12 +9,12 @@ from sqlalchemy.sql import func
 
 from ...models import Business
 from ...schemas import BusinessCreate, BusinessResponse, BusinessUpdate
-from ..dependencies import get_db
+from ..dependencies import get_db, verify_admin_api_key
 
 router = APIRouter(prefix="/businesses", tags=["businesses"])
 
 
-@router.post("", response_model=BusinessResponse)
+@router.post("", response_model=BusinessResponse, dependencies=[Depends(verify_admin_api_key)])
 def create_business(business: BusinessCreate, db: Session = Depends(get_db)):
     name = business.name.strip()
     existing = db.query(Business).filter(func.lower(Business.name) == name.lower()).first()
@@ -43,7 +43,7 @@ def get_business(business_id: int, db: Session = Depends(get_db)):
     return business
 
 
-@router.patch("/{business_id}", response_model=BusinessResponse)
+@router.patch("/{business_id}", response_model=BusinessResponse, dependencies=[Depends(verify_admin_api_key)])
 def update_business(business_id: int, payload: BusinessUpdate, db: Session = Depends(get_db)):
     business = db.query(Business).filter(Business.id == business_id).first()
     if not business:
@@ -81,13 +81,13 @@ def update_business(business_id: int, payload: BusinessUpdate, db: Session = Dep
     return business
 
 
-@router.put("/{business_id}", response_model=BusinessResponse)
+@router.put("/{business_id}", response_model=BusinessResponse, dependencies=[Depends(verify_admin_api_key)])
 def update_business_full(business_id: int, payload: BusinessUpdate, db: Session = Depends(get_db)):
     """Update business (alias for PATCH, for frontend compatibility)."""
     return update_business(business_id, payload, db)
 
 
-@router.delete("/{business_id}")
+@router.delete("/{business_id}", dependencies=[Depends(verify_admin_api_key)])
 def delete_business(business_id: int, db: Session = Depends(get_db)):
     """Delete business and all its related data (documents, FAQs, etc.)."""
     business = db.query(Business).filter(Business.id == business_id).first()

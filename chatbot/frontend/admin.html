@@ -1263,7 +1263,8 @@
     // =====================================================
     // CONFIGURACIÓN
     // =====================================================
-    const baseUrl = 'http://127.0.0.1:8000';
+    // Mismo servidor que sirve el panel; si se abre como fichero local, el servidor por defecto.
+    const baseUrl = location.protocol.startsWith('http') ? location.origin : 'http://127.0.0.1:8000';
     // La clave (ADMIN_API_KEY del servidor) se pide al abrir el panel y solo se guarda en esta pestaña.
     let apiKey = '';
     try { apiKey = sessionStorage.getItem('chatbot_admin_key') || ''; } catch (e) {}

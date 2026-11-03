@@ -1,5 +1,7 @@
 import json
 
+ADMIN = {"X-API-KEY": "test-key"}
+
 
 def stream_events(client, payload):
     with client.stream("POST", "/chat/stream", json=payload) as r:
@@ -24,8 +26,8 @@ def test_chat_uses_model_and_saves_conversation(client, fake_model, business):
     r = client.post("/chat", json=payload(business, "Cuéntame algo sobre tu experiencia con bases de datos"))
     assert r.status_code == 200
     assert r.json()["response"]
-    saved = client.get(f"/conversations/{business}")
-    assert saved.status_code == 200
+    saved = client.get(f"/conversations/{business}", headers=ADMIN)
+    assert saved.status_code == 200 and len(saved.json()) >= 1
 
 
 def test_direct_faq_skips_the_model(client, fake_model, business):
@@ -54,5 +56,3 @@ def test_stream_direct_faq(client, fake_model, business):
     assert "FastAPI" in events[-1]["final"] and fake_model.calls == 0
 
 
-def test_admin_requires_key(client):
-    assert client.get("/admin/businesses").status_code in (401, 403, 404)

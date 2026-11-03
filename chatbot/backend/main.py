@@ -37,12 +37,15 @@ app = FastAPI(
 if FRONTEND_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
+# El widget se incrusta en webs de terceros, por eso "*" por defecto.
+# En producción: CHATBOT_CORS_ORIGINS=https://minegocio.com,https://www.minegocio.com
+CORS_ORIGINS = [o.strip() for o in os.getenv("CHATBOT_CORS_ORIGINS", "*").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_headers=["Content-Type", "X-API-KEY"],
 )
 
 register_routes(app)

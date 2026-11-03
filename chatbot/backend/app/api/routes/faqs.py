@@ -8,12 +8,12 @@ from sqlalchemy.orm import Session
 
 from ...models import Business, FAQ
 from ...schemas import FAQCreate, FAQResponse
-from ..dependencies import get_db
+from ..dependencies import get_db, verify_admin_api_key
 
 router = APIRouter(prefix="/faqs", tags=["faqs"])
 
 
-@router.post("", response_model=FAQResponse)
+@router.post("", response_model=FAQResponse, dependencies=[Depends(verify_admin_api_key)])
 def create_faq(faq: FAQCreate, db: Session = Depends(get_db)):
     business = db.query(Business).filter(Business.id == faq.business_id).first()
     if not business:
@@ -48,7 +48,7 @@ def get_faqs_by_path(business_id: int, db: Session = Depends(get_db)):
     )
 
 
-@router.delete("/{faq_id}")
+@router.delete("/{faq_id}", dependencies=[Depends(verify_admin_api_key)])
 def delete_faq(faq_id: int, db: Session = Depends(get_db)):
     faq = db.query(FAQ).filter(FAQ.id == faq_id).first()
     if not faq:

@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from ...database import SessionLocal
 from ...models import Business, Conversation, FAQ
 from ...schemas import ChatMessage, ChatResponse
-from ..dependencies import get_db
+from ..dependencies import get_db, limit_chat_rate, verify_admin_api_key
 from ...services.chatbot_service import chatbot_service
 from ...services.document_service import document_service
 
@@ -285,7 +285,7 @@ def _prepare_chat(message: ChatMessage, db: Session) -> _Prepared:
     )
 
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post("/chat", response_model=ChatResponse, dependencies=[Depends(limit_chat_rate)])
 async def chat(message: ChatMessage, db: Session = Depends(get_db)):
     prep = _prepare_chat(message, db)
     if prep.answer is not None:
@@ -328,7 +328,7 @@ def _save_conversation_new_session(message: ChatMessage, bot_response: str) -> N
         db.close()
 
 
-@router.post("/chat/stream")
+@router.post("/chat/stream", dependencies=[Depends(limit_chat_rate)])
 async def chat_stream(message: ChatMessage, db: Session = Depends(get_db)):
     """Igual que /chat pero en Server-Sent Events: `{"delta": "..."}` por trozo y `{"final": "...", "done": true}` al terminar.
 
@@ -409,7 +409,7 @@ async def chat_stream(message: ChatMessage, db: Session = Depends(get_db)):
     )
 
 
-@router.get("/conversations/{business_id}")
+@router.get("/conversations/{business_id}", dependencies=[Depends(verify_admin_api_key)])
 def get_conversations(business_id: int, skip: int = 0, limit: int = 50, db: Session = Depends(get_db)):
     conversations = (
         db.query(Conversation)

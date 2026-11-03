@@ -65,7 +65,11 @@ Opcionales: `window.CHATBOT_POSITION` (`bottom-right`, `bottom-left`, `top-right
 
 | Variable | Por defecto | Para qué |
 |---|---|---|
-| `ADMIN_API_KEY` | *(sin definir)* | Protege `/admin/*` y `/api/*` con la cabecera `X-API-KEY`. **Si no se define, esas rutas quedan abiertas** (solo desarrollo). |
+| `ADMIN_API_KEY` | *(sin definir)* | Clave del panel (cabecera `X-API-KEY`) para todas las rutas que modifican datos o leen conversaciones. **Si no se define, la administración queda deshabilitada (503)**, no abierta. |
+| `CHATBOT_RATE_LIMIT_PER_MIN` | `20` | Mensajes por minuto e IP en `/chat` y `/chat/stream` (`0` = sin límite). Al superarlo: 429 con `Retry-After`. |
+| `CHATBOT_TRUST_PROXY` | `0` | `1` si hay un proxy inverso delante (nginx, Caddy): la IP se toma de `X-Forwarded-For`. No lo actives sin proxy, o cualquiera podría falsear su IP. |
+| `CHATBOT_CORS_ORIGINS` | `*` | Orígenes que pueden llamar a la API, separados por comas (p. ej. `https://minegocio.com`). |
+| `CHATBOT_MAX_MESSAGE_CHARS` | `1000` | Longitud máxima de un mensaje del chat (422 si se supera). |
 | `DATABASE_URL` | `sqlite:///./chatbot.db` | Base de datos. |
 | `CHATBOT_MODEL_NAME` | Llama 3.1 en `backend/models/` | Ruta o nombre del modelo. |
 | `CHATBOT_BACKEND` | según el nombre del modelo | `meta-llama` (llama.cpp) o `gpt4all`. |
@@ -87,12 +91,17 @@ Opcionales: `window.CHATBOT_POSITION` (`bottom-right`, `bottom-left`, `top-right
 |---|---|
 | `POST /chat` | Mensaje `{business_id, session_id, message}` → respuesta |
 | `POST /chat/stream` | Igual que `/chat`, pero en streaming (SSE): eventos `{"delta": "..."}` y, al final, `{"final": "...", "done": true}` con el texto limpio |
-| `GET/POST /businesses`, `GET/PUT/PATCH/DELETE /businesses/{id}` | Gestión de negocios |
-| `GET/POST /faqs`, `GET /faqs/{business_id}`, `DELETE /faqs/{id}` | Gestión de FAQs |
-| `GET /conversations/{business_id}` | Historial de conversaciones |
-| `POST /api/train-ia` | Subir PDF/DOCX y generar FAQs |
+| `GET /businesses`, `GET /businesses/{id}` | Negocios (lectura pública) |
+| `POST /businesses`, `PUT/PATCH/DELETE /businesses/{id}` 🔑 | Gestión de negocios |
+| `GET /faqs?business_id=`, `GET /faqs/{business_id}` | FAQs (lectura pública) |
+| `POST /faqs`, `DELETE /faqs/{id}` 🔑 | Gestión de FAQs |
+| `GET /conversations/{business_id}` 🔑 | Historial de conversaciones (datos de los clientes) |
+| `POST /api/train-ia` 🔑 | Subir PDF/DOCX y generar FAQs |
+| `POST /seed-demo` 🔑 | Datos de ejemplo |
 | `GET /status`, `GET /health` | Estado del modelo y salud del servicio |
-| `GET /admin/model_status`, `POST /admin/reinit_model`, `POST /admin/clear_model_failure` | Operaciones sobre el modelo |
+| `GET /admin/model_status`, `POST /admin/reinit_model`, `POST /admin/clear_model_failure` 🔑 | Operaciones sobre el modelo |
+
+🔑 = requiere la cabecera `X-API-KEY` con el valor de `ADMIN_API_KEY`.
 
 ## Rendimiento en CPU
 
@@ -160,4 +169,13 @@ Inicializa los datos con `docker compose run --rm chatbot python -m backend.main
 
 - Una sola generación a la vez (lock): pensado para demo/uso ligero, no para mucho tráfico concurrente.
 - En CPU la primera palabra tarda segundos; con un modelo de 3B es unas 2,5 veces más rápida, a costa de calidad.
-- El panel de administración depende de `ADMIN_API_KEY`; no expongas el servidor a internet sin limitar CORS y aplicar rate limiting.
+- El límite de mensajes vive en memoria: vale para un solo proceso; con varias réplicas haría falta Redis.
+- SQLite y un único proceso: suficiente para una demo, no para producción con muchos negocios.
+
+## Seguridad
+
+- **Administración cerrada por defecto:** sin `ADMIN_API_KEY` no se puede crear, editar ni borrar nada (503). La clave se compara en tiempo constante.
+- **Conversaciones protegidas:** `/conversations` contiene lo que escriben los clientes, así que exige la clave.
+- **Límite de mensajes por IP** y **tamaño máximo de mensaje**: un único usuario no puede acaparar el modelo (que atiende de uno en uno) ni llenar su ventana de contexto.
+- **CORS acotable** con `CHATBOT_CORS_ORIGINS`, y solo con los métodos y cabeceras que usa el frontend.
+- Para publicarlo: pon un proxy con HTTPS delante (Caddy o nginx) con `CHATBOT_TRUST_PROXY=1`, usa una clave larga y no la subas al repositorio.

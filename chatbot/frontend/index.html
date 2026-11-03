@@ -176,7 +176,7 @@
 
   <script>
   window.CHATBOT_CONFIG = {
-    apiUrl: 'http://192.168.56.1:8000',
+    apiUrl: window.CHATBOT_API_URL || window.location.origin,
     businessId: 1,
     businessName: 'Chatbot AI',
     primaryColor: '#6366f1',
